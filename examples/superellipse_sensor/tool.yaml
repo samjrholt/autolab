@@ -1,0 +1,72 @@
+name: superellipse_hysteresis
+capability: superellipse_hysteresis
+version: 0.1.0
+module: ubermag-superellipse.v0.1
+resource: computer
+requires:
+    cores_gte: 1
+adapter: examples.superellipse_sensor.adapter:SuperellipseHysteresis
+produces_sample: true
+destructive: false
+
+# Inputs are the geometry + intrinsic magnetic parameters of the sensor's
+# free-layer element. Units follow ubermag / SI conventions.
+inputs:
+    Ms:
+        kind: scalar
+        unit: A/m
+        description: saturation magnetisation
+    K1:
+        kind: scalar
+        unit: J/m^3
+        description: uniaxial anisotropy constant
+    A_ex:
+        kind: scalar
+        unit: J/m
+        description: exchange stiffness
+    a:
+        kind: scalar
+        unit: nm
+        description: superellipse semi-axis along x
+    b:
+        kind: scalar
+        unit: nm
+        description: superellipse semi-axis along y
+    n:
+        kind: scalar
+        description: superellipse exponent (2 = ellipse, larger = more rectangular)
+    thickness:
+        kind: scalar
+        unit: nm
+        description: film thickness
+    H_max:
+        kind: scalar
+        unit: A/m
+        description: applied field sweep amplitude
+    cell_size:
+        kind: scalar
+        unit: nm
+        description: micromagnetic cell edge length (ubermag backend only)
+    n_steps:
+        kind: scalar
+        description: number of field steps per branch
+
+outputs:
+    Hc:
+        kind: scalar
+        unit: A/m
+        description: coercive field
+    Mr_over_Ms:
+        kind: scalar
+        description: remanence ratio
+    sensitivity:
+        kind: scalar
+        unit: 1/T
+        description: small-signal slope at H=0, normalised by Ms
+    linear_range:
+        kind: scalar
+        unit: T
+        description: half-width over which the loop stays within 5 percent of linear
+    loop:
+        kind: curve
+        description: hysteresis loop, columns H and M

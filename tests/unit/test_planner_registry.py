@@ -1,0 +1,76 @@
+"""Unit tests for the planner registry."""
+
+from __future__ import annotations
+
+import pytest
+
+from autolab.planners import list_planners, register_planner, unregister_planner
+from autolab.planners.base import Planner
+from autolab.planners.bo import BOPlanner
+from autolab.planners.optuna import OptunaPlanner
+from autolab.planners.registry import build
+
+
+class TestBuiltinRegistry:
+    def test_bo_and_optuna_registered(self):
+        names = list_planners()
+        assert "bo" in names
+        assert "optuna" in names
+
+    def test_build_bo_from_config(self):
+        planner = build(
+            "bo",
+            {
+                "operation": "stub",
+                "parameter_space": {
+                    "x": {"type": "float", "low": 0.0, "high": 1.0},
+                },
+                "initial_random": 2,
+                "seed": 1,
+            },
+        )
+        assert isinstance(planner, BOPlanner)
+        assert planner.name == "bo"
+
+    def test_build_optuna_from_config(self):
+        planner = build(
+            "optuna",
+            {
+                "operation": "stub",
+                "search_space": {
+                    "x": {"type": "float", "low": 0.0, "high": 1.0},
+                },
+                "sampler": "random",
+                "seed": 0,
+            },
+        )
+        assert isinstance(planner, OptunaPlanner)
+        assert planner.name == "optuna"
+
+    def test_unknown_name_raises_keyerror(self):
+        with pytest.raises(KeyError):
+            build("not_a_real_planner", {})
+
+
+class TestCustomRegistration:
+    def test_register_and_build_custom(self):
+        class _DummyPlanner(Planner):
+            name = "dummy"
+
+            def plan(self, context):  # type: ignore[override]
+                return []
+
+        try:
+            register_planner("dummy", lambda cfg: _DummyPlanner())
+            planner = build("dummy", {})
+            assert isinstance(planner, _DummyPlanner)
+        finally:
+            unregister_planner("dummy")
+
+    def test_double_register_without_overwrite_raises(self):
+        try:
+            register_planner("dupe", lambda cfg: BOPlanner.__new__(BOPlanner))
+            with pytest.raises(ValueError):
+                register_planner("dupe", lambda cfg: BOPlanner.__new__(BOPlanner))
+        finally:
+            unregister_planner("dupe")

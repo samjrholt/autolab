@@ -1,0 +1,89 @@
+# ---- Python ----
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+wheels/
+
+# Test / coverage / static analysis
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+.hypothesis/
+.tox/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Stray virtual envs (not used — pixi manages the environment)
+.venv/
+venv/
+env/
+.python-version
+
+# Environment / secrets
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# ---- Pixi ----
+# The pixi.lock file IS committed (it is a lockfile, like package-lock.json).
+# Only the resolved environment cache is ignored.
+.pixi/
+
+# ---- Node / frontend ----
+node_modules/
+frontend/dist/
+frontend/.vite/
+frontend/coverage/
+*.tsbuildinfo
+
+# ---- IDE / editor ----
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# ---- OS ----
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# ---- Tool caches ----
+.direnv/
+.tool-versions
+.autolab-runs/
+
+# ---- autolab runtime artefacts ----
+# The ledger, cached tool outputs, generated PDF reports, and any
+# Lab state rehydrated at runtime. Test fixtures under tests/ are
+# checked in explicitly; only these runtime paths are ignored.
+/data/
+/ledger/
+/cache/
+/reports/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+*.db
+*.db-journal

@@ -1,0 +1,42 @@
+[project]
+name = "autolab"
+version = "0.0.1"
+description = "A scientific record with an agent attached."
+authors = ["Sam Holt <samjrholt@gmail.com>"]
+channels = ["conda-forge"]
+platforms = ["win-64", "linux-64", "osx-arm64"]
+
+# Conda-managed dependencies. Kept minimal — everything else comes via pypi.
+[dependencies]
+python = "3.12.*"
+pip = ">=24.0"
+
+# The package itself, installed editable with dev extras. Pulls in
+# runtime deps (FastAPI, pydantic, SQLAlchemy, anthropic, mcp, …) and
+# dev deps (pytest, ruff, mypy) from pyproject.toml.
+[pypi-dependencies]
+autolab = { path = ".", editable = true, extras = ["dev"] }
+
+# ---- Tasks ----
+#
+# Run any of these from the repo root with `pixi run <name>`.
+
+[tasks]
+# Boot the Lab locally with autoreload. This is the default entry point —
+# the Lab is a long-running service, not a one-shot CLI.
+serve = "uvicorn autolab.server.app:app --reload --port 8000"
+
+# Boot the Lab without reload (closer to production mode).
+serve-prod = "uvicorn autolab.server.app:app --host 0.0.0.0 --port 8000"
+
+# Run the full test suite.
+test = "pytest"
+test-cov = "pytest --cov=autolab --cov-report=term-missing --cov-report=html"
+
+# Static analysis.
+lint = { cmd = "ruff check src tests && ruff format --check src tests" }
+format = "ruff format src tests"
+typecheck = "mypy src/autolab"
+
+# One shot: run everything CI runs.
+check = { depends-on = ["lint", "typecheck", "test"] }
