@@ -488,26 +488,57 @@ except Exception as exc:  # noqa: BLE001
 
 _MAMMOS_FINITE_T_SCRIPT = r"""
 import json, sys
+
+# mammos-spindynamics 0.4 exposes a small materials database (db.get_spontaneous_magnetization)
+# derived from published UppASD runs. If the user's prototype is in the DB, use the real Ms(T)
+# curve; otherwise we fall through to the host-side Kuzmin surrogate.
 try:
-    import mammos_spindynamics as mspin
+    from mammos_spindynamics import db
+
     Ms0 = payload["Ms0_A_per_m"]
     K10 = payload["K1_0_J_per_m3"]
     Aex0 = payload["Aex0_J_per_m"]
     T = payload["target_temp_k"]
-    Tc_override = payload.get("Tc_override_K")
+    prototype = payload.get("prototype", "")
 
-    curve = mspin.kuzmin_fit(Ms0=Ms0, K1_0=K10, Aex_0=Aex0)
-    Tc = float(Tc_override) if Tc_override else float(curve.Tc_K)
-    m = float(curve.m_of_T(T))
+    # Try to find the material in the DB.  find_materials returns a pd.DataFrame;
+    # if nothing matches we raise SystemExit so the surrogate takes over.
+    matches = db.find_materials(prototype) if hasattr(db, "find_materials") else None
+    if matches is None or (hasattr(matches, "empty") and matches.empty):
+        sys.stderr.write(f"mammos-spindynamics DB has no entry for {prototype!r}\n")
+        raise SystemExit(2)
+
+    data = db.get_spontaneous_magnetization(prototype)
+    Tc = float(getattr(data, "Tc_K", payload.get("Tc_override_K") or 0.0))
+    if Tc <= 0.0:
+        raise SystemExit(2)
+    # Ms(T): data.Ms_SI is expected to be in A/m. Evaluate at target T by interpolation.
+    Ts = [float(x) for x in data.T_K]
+    Ms = [float(x) for x in data.Ms_A_per_m]
+    # Linear interp (sorted ascending T assumed).
+    if T <= Ts[0]:
+        Ms_T = Ms[0]
+    elif T >= Ts[-1]:
+        Ms_T = Ms[-1]
+    else:
+        for i in range(len(Ts) - 1):
+            if Ts[i] <= T <= Ts[i + 1]:
+                frac = (T - Ts[i]) / (Ts[i + 1] - Ts[i])
+                Ms_T = Ms[i] + frac * (Ms[i + 1] - Ms[i])
+                break
+    m = Ms_T / Ms0 if Ms0 > 0 else 0.0
     print(json.dumps({
         "Tc_K": Tc,
-        "Ms_T_A_per_m": Ms0 * m,
+        "Ms_T_A_per_m": Ms_T,
         "K1_T_J_per_m3": K10 * m ** 3,
         "Aex_T_J_per_m": Aex0 * m ** 2,
         "m_T_over_Ms0": m,
     }))
+    raise SystemExit(0)
+except SystemExit:
+    raise
 except Exception as exc:  # noqa: BLE001
-    sys.stderr.write(f"mammos-spindynamics backend unavailable: {exc!r}\n")
+    sys.stderr.write(f"mammos-spindynamics DB backend unavailable: {exc!r}\n")
     raise SystemExit(2)
 """
 

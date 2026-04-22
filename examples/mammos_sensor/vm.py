@@ -113,16 +113,49 @@ class VMConfig:
         )
 
 
+#: Pixi projects autolab probes for when ``AUTOLAB_VM_PIXI_PROJECT`` is unset.
+#: The first one whose ``pixi.toml`` exists inside the VM is activated
+#: automatically — so a user who followed the README's setup gets real
+#: backends with zero env-var fiddling.
+DEFAULT_PIXI_PROJECT_CANDIDATES: tuple[str, ...] = (
+    "~/autolab-mammos",
+    "~/mammos",
+    "~/autolab",
+)
+
+
 class VMExecutor:
     """Runs Python snippets inside a VM and returns their JSON-encoded stdout.
 
     The script you submit MUST ``print(json.dumps(...))`` its result on
     stdout and nothing else — the executor parses stdout as a single
     JSON object.
+
+    Auto-detection
+    --------------
+
+    If ``config.pixi_project`` is ``None`` (i.e. ``AUTOLAB_VM_PIXI_PROJECT``
+    is not set), the executor probes :data:`DEFAULT_PIXI_PROJECT_CANDIDATES`
+    in the VM and activates the first one that has a ``pixi.toml``.
+    This means a user who followed the README's install steps
+    (``~/autolab-mammos``) gets real ubermag/OOMMF/mammos backends on the
+    first ``pixi run python -m examples.mammos_sensor.run`` with no
+    extra configuration.
+
+    To opt out of auto-detection, set ``AUTOLAB_VM_PIXI_PROJECT=none`` or
+    ``AUTOLAB_VM_PIXI_PROJECT=""``.
     """
 
     def __init__(self, config: VMConfig | None = None) -> None:
         self.config = config or VMConfig.from_env()
+        # Opt-out sentinel.
+        if self.config.pixi_project in ("none", ""):
+            self.config.pixi_project = None
+        elif self.config.pixi_project is None:
+            self.config.pixi_project = self._autodetect_pixi_project()
+        # Expand leading `~` against the VM's $HOME so the runner invocation works.
+        if self.config.pixi_project and self.config.pixi_project.startswith("~"):
+            self.config.pixi_project = self._expand_home(self.config.pixi_project)
 
     # ------------------------------------------------------------------
     # Introspection
@@ -229,6 +262,63 @@ class VMExecutor:
                 returncode=0,
                 stderr=stderr,
             ) from exc
+
+    def _autodetect_pixi_project(self) -> str | None:
+        """Probe the VM for a pixi project at one of the default paths.
+
+        Returns the first path whose ``pixi.toml`` exists, or ``None`` if
+        no candidate matches. Quiet on failure — auto-detection is a
+        best-effort convenience, not a hard requirement.
+        """
+        for cand in DEFAULT_PIXI_PROJECT_CANDIDATES:
+            argv = self._probe_argv(f"test -f {shlex.quote(cand)}/pixi.toml")
+            if argv is None:
+                return None  # kind not supported for remote probing
+            try:
+                proc = subprocess.run(
+                    argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=5.0, check=False,
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                return None
+            if proc.returncode == 0:
+                return cand
+        return None
+
+    def _expand_home(self, path: str) -> str:
+        """Expand a leading ``~`` against the VM's $HOME."""
+        if not path.startswith("~"):
+            return path
+        argv = self._probe_argv(f"echo {shlex.quote(path)}")
+        if argv is None:
+            return path
+        try:
+            proc = subprocess.run(
+                argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                timeout=5.0, check=False,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            return path
+        if proc.returncode != 0:
+            return path
+        expanded = proc.stdout.decode(errors="replace").strip()
+        return expanded or path
+
+    def _probe_argv(self, shell_cmd: str) -> list[str] | None:
+        """Return argv that runs ``shell_cmd`` inside the VM (None for local)."""
+        if self.config.kind == "wsl":
+            argv = ["wsl.exe"]
+            if self.config.distro:
+                argv += ["-d", self.config.distro]
+            argv += ["--", "bash", "-c", shell_cmd]
+            return argv
+        if self.config.kind == "local":
+            return ["bash", "-c", shell_cmd]
+        if self.config.kind == "ssh":
+            if not self.config.ssh_host:
+                return None
+            return ["ssh", self.config.ssh_host, shell_cmd]
+        return None
 
     def _build_argv(self) -> list[str]:
         # If a pixi project is configured, wrap everything in `cd <proj> && pixi run python -`

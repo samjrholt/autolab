@@ -63,6 +63,12 @@ from autolab.workflow import StepResult, WorkflowEngine, WorkflowResult
 
 __version__ = "0.0.1"
 
+
+def _lazy_agents():  # pragma: no cover — thin re-export
+    from autolab import agents as _agents
+
+    return _agents
+
 __all__ = [
     # Acceptance
     "AcceptanceCriteria",

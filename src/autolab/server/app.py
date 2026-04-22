@@ -1,0 +1,1103 @@
+"""FastAPI + WebSocket surface for the Lab service.
+
+Usage::
+
+    uvicorn autolab.server.app:app --reload --port 8000
+
+Or via the pixi task::
+
+    pixi run serve
+
+Design
+------
+
+- One FastAPI process owns one :class:`~autolab.Lab` in
+  ``app.state.lab`` and one :class:`~autolab.CampaignScheduler` in
+  ``app.state.scheduler``.  The scheduler's ``run()`` task is launched
+  as a background coroutine at startup.
+- The Lab's :class:`~autolab.events.EventBus` is bridged to every
+  connected WebSocket.  Every Record lifecycle transition, every
+  Campaign start/finish, every escalation fans out as one JSON message
+  on ``/events``.
+- REST handlers mutate the Lab through its own methods; they never
+  touch the ledger directly.  This keeps the "Operations never write
+  Records" invariant intact.
+- The Console is a single ``index.html`` served at ``/``.  It pulls
+  React + Tailwind from CDNs; the server has no build step.
+
+Persistence
+-----------
+
+The ``AUTOLAB_ROOT`` env var (default ``./.autolab-runs/default``)
+points at the directory the Ledger writes into.  Restart-safe by
+construction — a new process pointed at the same directory rehydrates
+from SQLite.
+
+Test bootstrap
+--------------
+
+``AUTOLAB_BOOTSTRAP`` env var: ``"demo"`` (default) pre-registers a
+small stub Operation + one computer Resource so the UI has something to
+display immediately; ``"none"`` boots a totally empty Lab; any other
+value is a dotted path ``module:function`` that will be called with the
+Lab as its only argument (for wiring your own demo).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import importlib
+import json
+import logging
+import os
+from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Any
+
+from fastapi import FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, Field, ValidationError
+
+from autolab import query
+from autolab.acceptance import evaluate as evaluate_gate
+from autolab.agents.claude import (
+    CampaignDesigner,
+    ClaudePlanner,
+    ClaudePolicyProvider,
+    ClaudeTransport,
+    drain_pending_claims,
+)
+from autolab.campaign import Campaign
+from autolab.estimation import EstimationEngine
+from autolab.events import EventBus
+from autolab.lab import Lab
+from autolab.models import (
+    AcceptanceCriteria,
+    Annotation,
+    EscalationResolution,
+    Intervention,
+    Objective,
+    ProposedStep,
+    Resource,
+    WorkflowStep,
+    WorkflowTemplate,
+)
+from autolab.planners.base import HeuristicPolicyProvider, PlanContext, Planner
+from autolab.planners.registry import build as build_planner
+from autolab.planners.registry import list_planners
+from autolab.scheduler import CampaignScheduler
+
+log = logging.getLogger("autolab.server")
+
+
+# ---------------------------------------------------------------------------
+# Request / response models
+# ---------------------------------------------------------------------------
+
+
+class ResourceRequest(BaseModel):
+    name: str
+    kind: str
+    capabilities: dict[str, Any] = Field(default_factory=dict)
+    description: str | None = None
+    asset_id: str | None = None
+    typical_operation_durations: dict[str, int] = Field(default_factory=dict)
+
+
+class WorkflowRequest(BaseModel):
+    name: str
+    description: str | None = None
+    steps: list[dict[str, Any]]
+    acceptance: dict[str, Any] | None = None
+    typical_duration_s: int | None = None
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class CampaignRequest(BaseModel):
+    name: str
+    description: str | None = None
+    objective: dict[str, Any]
+    acceptance: dict[str, Any] | None = None
+    budget: int | None = 16
+    parallelism: int = 1
+    priority: int = 50
+    planner: str = "heuristic"  # "heuristic", "bo", "optuna", "claude", or a custom factory name
+    planner_config: dict[str, Any] = Field(default_factory=dict)
+    use_claude_policy: bool = False
+    # Optional: an inline workflow to execute deterministically when the planner is "none".
+    workflow: dict[str, Any] | None = None
+
+
+class EscalationResolutionRequest(BaseModel):
+    action: str
+    reason: str
+    retry_inputs: dict[str, Any] = Field(default_factory=dict)
+    extra_step: dict[str, Any] | None = None
+
+
+class AnnotationRequest(BaseModel):
+    note: str
+    tags: list[str] = Field(default_factory=list)
+    author: str = "human"
+
+
+class InterventionRequest(BaseModel):
+    body: str
+    author: str = "human"
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class DesignRequest(BaseModel):
+    text: str
+
+
+# ---------------------------------------------------------------------------
+# WebSocket connection manager
+# ---------------------------------------------------------------------------
+
+
+class ConnectionManager:
+    def __init__(self) -> None:
+        self._connections: list[WebSocket] = []
+        self._lock = asyncio.Lock()
+
+    async def connect(self, ws: WebSocket) -> None:
+        await ws.accept()
+        async with self._lock:
+            self._connections.append(ws)
+
+    async def disconnect(self, ws: WebSocket) -> None:
+        async with self._lock:
+            if ws in self._connections:
+                self._connections.remove(ws)
+
+    async def broadcast(self, message: dict[str, Any]) -> None:
+        dead: list[WebSocket] = []
+        for ws in list(self._connections):
+            try:
+                await ws.send_json(_json_safe(message))
+            except Exception:
+                dead.append(ws)
+        if dead:
+            async with self._lock:
+                for ws in dead:
+                    if ws in self._connections:
+                        self._connections.remove(ws)
+
+
+def _json_safe(msg: Any) -> Any:
+    """Round-trip through orjson to coerce datetimes / sets etc."""
+    return json.loads(json.dumps(msg, default=str))
+
+
+# ---------------------------------------------------------------------------
+# Bootstrap: demo stub so the UI has something to show immediately.
+# ---------------------------------------------------------------------------
+
+
+def _bootstrap_superellipse(lab: Lab) -> None:
+    """Real-physics bootstrap: the superellipse-sensor example.
+
+    Registers one `computer` Resource and the `superellipse_hysteresis`
+    capability.  The adapter uses a surrogate when ubermag is not
+    installed (the default) — the Record's `module` field says which
+    backend actually ran.  Provenance-visible, not silent.
+    """
+    import sys
+    from pathlib import Path as _Path
+
+    from autolab.models import Resource as _Resource
+
+    # `examples/` lives at the repo root, not inside the installed `autolab`
+    # package. Make it importable so the Tool YAML's adapter path resolves.
+    repo_root = _Path(__file__).resolve().parents[3]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+
+    if not lab.resources.list():
+        lab.register_resource(
+            _Resource(
+                name="pc-1",
+                kind="computer",
+                capabilities={"cores_gte": 1, "has_oommf": False},
+                description="Local workstation — runs the superellipse surrogate.",
+                typical_operation_durations={"superellipse_hysteresis": 4},
+            )
+        )
+    if not lab.tools.has("superellipse_hysteresis"):
+        # The YAML declaration lives in the example directory; we register
+        # it against the running Lab so provenance sees the same hash the
+        # CLI-driven run would produce.
+        yaml_path = (
+            _Path(__file__).resolve().parents[3]
+            / "examples"
+            / "superellipse_sensor"
+            / "tool.yaml"
+        )
+        lab.register_tool(yaml_path)
+
+
+def _bootstrap_mammos(lab: Lab) -> None:
+    """Full MaMMoS demonstrator — 6 Operations + Workflow + VM resource."""
+    import sys
+    from pathlib import Path as _Path
+
+    repo_root = _Path(__file__).resolve().parents[3]
+    if str(repo_root) not in sys.path:
+        sys.path.insert(0, str(repo_root))
+    from examples.mammos_sensor.server_bootstrap import bootstrap as _mammos_boot
+
+    _mammos_boot(lab)
+
+
+def _bootstrap_demo_quadratic(lab: Lab) -> None:
+    """Trivial stub Operation. Opt-in only — not wired into the default Console
+    viz routing. Use for clicking around when the real adapters are unavailable.
+    """
+    from pydantic import BaseModel as _BM
+
+    from autolab.models import Feature, FeatureView, OperationResult
+    from autolab.models import Resource as _Resource
+    from autolab.operations.base import Operation, OperationContext
+
+    class DemoQuadratic(Operation):
+        capability = "demo_quadratic"
+        resource_kind = "computer"
+        module = "demo_quadratic.v1"
+        typical_duration = 2
+
+        class Inputs(_BM):
+            x: float
+            target: float = 0.5
+
+        class Outputs(_BM):
+            score: float
+
+        async def run(
+            self, inputs: dict[str, Any], context: OperationContext
+        ) -> OperationResult:
+            import random
+
+            await asyncio.sleep(0.4 + random.random() * 0.6)
+            x = float(inputs.get("x", 0.0))
+            target = float(inputs.get("target", 0.5))
+            score = -((x - target) ** 2) + 1.0
+            return OperationResult(
+                status="completed",
+                outputs={"score": score, "x": x},
+                features=FeatureView(fields={"score": Feature(kind="scalar", value=score)}),
+            )
+
+    if not lab.resources.list():
+        lab.register_resource(
+            _Resource(
+                name="pc-1",
+                kind="computer",
+                capabilities={"cores_gte": 4},
+                description="Local workstation (stub tool).",
+                typical_operation_durations={"demo_quadratic": 2},
+            )
+        )
+    if not lab.tools.has("demo_quadratic"):
+        lab.register_operation(DemoQuadratic)
+
+
+def _register_annotation_extract(lab: Lab) -> None:
+    """Register the `annotation_extract` Interpretation Op and wire
+    the Lab + ClaudeTransport into its OperationContext via a pre-hook.
+    Idempotent — safe to call on every bootstrap.
+    """
+    from autolab.agents.claude import ClaudeTransport
+    from autolab.operations.interpretation import AnnotationExtract
+
+    if lab.tools.has("annotation_extract"):
+        return
+    lab.register_operation(AnnotationExtract)
+    transport = ClaudeTransport()
+
+    async def _inject(ctx: Any, _state: Any) -> None:
+        if ctx.operation == "annotation_extract":
+            ctx.metadata.setdefault("lab", lab)
+            ctx.metadata.setdefault("claude", transport)
+
+    lab.orchestrator.add_pre_hook(_inject)
+
+
+def _bootstrap(lab: Lab) -> None:
+    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "superellipse")
+    # annotation_extract is always available regardless of mode.
+    _register_annotation_extract(lab)
+    if mode in ("none", ""):
+        return
+    if mode == "superellipse":
+        try:
+            _bootstrap_superellipse(lab)
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("superellipse bootstrap failed (%s) — falling back to empty", exc)
+            return
+    if mode == "mammos":
+        try:
+            _bootstrap_mammos(lab)
+            return
+        except Exception as exc:  # noqa: BLE001
+            log.warning("mammos bootstrap failed (%s) — falling back to empty", exc)
+            return
+    if mode == "all":
+        # Register both example bundles so the Console can run either.
+        for name, fn in (("superellipse", _bootstrap_superellipse), ("mammos", _bootstrap_mammos)):
+            try:
+                fn(lab)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("%s bootstrap failed (%s)", name, exc)
+        return
+    if mode == "demo_quadratic":
+        _bootstrap_demo_quadratic(lab)
+        return
+    # Custom dotted path module:function
+    if ":" in mode:
+        mod_name, attr = mode.split(":", 1)
+        module = importlib.import_module(mod_name)
+        fn = getattr(module, attr)
+        fn(lab)
+        return
+    log.warning("unknown AUTOLAB_BOOTSTRAP mode %r — booting empty", mode)
+
+
+# ---------------------------------------------------------------------------
+# Event bridge: Lab events → WebSocket broadcast.
+# ---------------------------------------------------------------------------
+
+
+async def _event_bridge(events: EventBus, ws_manager: ConnectionManager) -> None:
+    q = events.subscribe()
+    try:
+        while True:
+            ev = await q.get()
+            msg = {
+                "kind": ev.kind,
+                "timestamp": ev.timestamp.isoformat(),
+                "payload": ev.payload,
+            }
+            await ws_manager.broadcast(msg)
+    except asyncio.CancelledError:
+        return
+    finally:
+        events.unsubscribe(q)
+
+
+# ---------------------------------------------------------------------------
+# Lifespan
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s  %(name)-24s  %(message)s",
+        datefmt="%H:%M:%S",
+    )
+    root = os.environ.get("AUTOLAB_ROOT", "./.autolab-runs/default")
+    lab = Lab(root)
+    _bootstrap(lab)
+    scheduler = CampaignScheduler(lab)
+    ws_manager = ConnectionManager()
+
+    app.state.lab = lab
+    app.state.scheduler = scheduler
+    app.state.ws = ws_manager
+
+    bridge = asyncio.create_task(_event_bridge(lab.events, ws_manager), name="event-bridge")
+    sched_task = asyncio.create_task(scheduler.run(), name="scheduler-run")
+    app.state._tasks = [bridge, sched_task]
+
+    log.info("autolab server ready — ledger at %s", Path(root).resolve())
+    try:
+        yield
+    finally:
+        # Cooperative cancellation — never .cancel() a task mid-SQLite-write
+        # or Windows raises an access violation in the worker thread.
+        for cid, state in list(scheduler._campaigns.items()):
+            if state.status in ("running", "paused", "queued"):
+                try:
+                    await scheduler.cancel(cid)
+                except Exception:
+                    pass
+        # Wait for the scheduler.run() task to finish naturally.
+        try:
+            await asyncio.wait_for(sched_task, timeout=10.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
+        # Drain any in-flight Claude claim persistence tasks before the Ledger
+        # closes — otherwise a SQLite worker thread can race with Lab.close().
+        await drain_pending_claims()
+        # Now it's safe to tear down the event bridge.
+        bridge.cancel()
+        try:
+            await bridge
+        except Exception:
+            pass
+        lab.close()
+
+
+app = FastAPI(title="autolab", lifespan=lifespan)
+
+
+def _lab(request: Request) -> Lab:
+    return request.app.state.lab
+
+
+def _scheduler(request: Request) -> CampaignScheduler:
+    return request.app.state.scheduler
+
+
+def _ws_mgr(request: Request) -> ConnectionManager:
+    return request.app.state.ws
+
+
+# ---------------------------------------------------------------------------
+# Static console
+# ---------------------------------------------------------------------------
+
+
+_STATIC_DIR = Path(__file__).parent / "static"
+if _STATIC_DIR.is_dir():
+    app.mount("/static", StaticFiles(directory=_STATIC_DIR), name="static")
+
+
+@app.get("/", response_class=HTMLResponse)
+async def index() -> HTMLResponse:
+    index_file = _STATIC_DIR / "index.html"
+    if not index_file.exists():
+        return HTMLResponse(
+            "<h1>autolab</h1><p>Console not built. Is <code>src/autolab/server/static/index.html</code> present?</p>",
+            status_code=500,
+        )
+    return HTMLResponse(index_file.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------------------
+# Status / introspection
+# ---------------------------------------------------------------------------
+
+
+@app.get("/status")
+async def status(request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    scheduler = _scheduler(request)
+    eng = EstimationEngine(lab)
+    records = list(lab.ledger.iter_records())
+    counts = {"completed": 0, "failed": 0, "pending": 0, "running": 0, "soft_fail": 0}
+    for r in records:
+        if r.record_status in counts:
+            counts[r.record_status] += 1
+    return {
+        "lab_id": lab.lab_id,
+        "root": str(lab.root.resolve()),
+        "record_counts": counts,
+        "total_records": len(records),
+        "resources": lab.resources.status(),
+        "tools": [_tool_row(d) for d in lab.tools.list()],
+        "campaigns": scheduler.status(),
+        "workflows": [w.model_dump(mode="json") for w in lab._workflows.values()],
+        "planners_available": list_planners() + ["heuristic", "claude"],
+        "estimation_summary": eng.summary(),
+        "claude_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
+    }
+
+
+def _tool_row(decl: Any) -> dict[str, Any]:
+    return {
+        "name": decl.name,
+        "capability": decl.capability,
+        "version": decl.version,
+        "resource_kind": decl.resource_kind,
+        "requires": decl.requires,
+        "inputs": decl.inputs,
+        "outputs": decl.outputs,
+        "module": decl.module,
+        "produces_sample": decl.produces_sample,
+        "destructive": decl.destructive,
+        "declaration_hash": decl.declaration_hash,
+        "typical_duration_s": decl.typical_duration_s,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Resources
+# ---------------------------------------------------------------------------
+
+
+@app.get("/resources")
+async def list_resources(request: Request) -> list[dict[str, Any]]:
+    return _lab(request).resources.status()
+
+
+@app.post("/resources")
+async def add_resource(body: ResourceRequest, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    try:
+        resource = Resource(**body.model_dump())
+        lab.register_resource(resource)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    lab.events.publish_sync_safe = None  # type: ignore[attr-defined]
+    # publish an event so the Console refreshes.
+    from autolab.events import Event
+
+    lab.events.publish(Event(kind="resource.registered", payload={"name": resource.name}))
+    return {"ok": True, "name": resource.name}
+
+
+@app.delete("/resources/{name}")
+async def remove_resource(name: str, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    try:
+        lab.resources.unregister(name)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    from autolab.events import Event
+
+    lab.events.publish(Event(kind="resource.unregistered", payload={"name": name}))
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
+
+
+@app.get("/tools")
+async def list_tools(request: Request) -> list[dict[str, Any]]:
+    return [_tool_row(d) for d in _lab(request).tools.list()]
+
+
+@app.post("/tools/register-yaml")
+async def register_yaml_tool(body: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Register a YAML/JSON tool declaration POSTed as JSON."""
+    lab = _lab(request)
+    try:
+        decl = lab.register_tool_dict(body)
+    except (ValueError, KeyError) as exc:
+        raise HTTPException(400, str(exc)) from exc
+    return _tool_row(decl)
+
+
+# ---------------------------------------------------------------------------
+# Workflows
+# ---------------------------------------------------------------------------
+
+
+@app.get("/workflows")
+async def list_workflows(request: Request) -> list[dict[str, Any]]:
+    lab = _lab(request)
+    return [w.model_dump(mode="json") for w in lab._workflows.values()]
+
+
+class WorkflowRunRequest(BaseModel):
+    campaign_id: str | None = None  # optional grouping; new one minted if absent
+    input_overrides: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    max_parallel: int | None = None
+
+
+@app.post("/workflows/{name}/run")
+async def run_workflow(name: str, body: WorkflowRunRequest, request: Request) -> dict[str, Any]:
+    """Execute a registered WorkflowTemplate directly (no Planner loop).
+
+    Each step is a full Orchestrator-wrapped Operation with hashed
+    provenance. Returns the per-step outcomes.
+    """
+    lab = _lab(request)
+    if name not in lab._workflows:
+        raise HTTPException(404, f"workflow {name!r} not registered")
+    import uuid
+
+    from autolab.orchestrator import CampaignRun
+
+    session = lab.new_session()
+    cid = body.campaign_id or f"wf-{uuid.uuid4().hex[:10]}"
+    run = CampaignRun(lab_id=lab.lab_id, campaign_id=cid, session=session)
+    try:
+        result = await lab.run_workflow(
+            name,
+            run,
+            input_overrides=body.input_overrides,
+            max_parallel=body.max_parallel,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface a clean error
+        raise HTTPException(500, f"workflow failed: {exc!r}") from exc
+    return {
+        "ok": result.completed,
+        "campaign_id": cid,
+        "workflow": name,
+        "steps": [
+            {
+                "step_id": s.step_id,
+                "record_id": s.record.id,
+                "status": s.record.record_status,
+                "operation": s.record.operation,
+                "gate": s.gate.result if s.gate else None,
+            }
+            for s in result.steps
+        ],
+        "skipped": result.skipped_step_ids,
+    }
+
+
+@app.post("/workflows")
+async def register_workflow(body: WorkflowRequest, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    try:
+        steps = [WorkflowStep(**s) for s in body.steps]
+        tmpl = WorkflowTemplate(
+            name=body.name,
+            description=body.description,
+            steps=steps,
+            acceptance=(
+                AcceptanceCriteria(**body.acceptance) if body.acceptance else None
+            ),
+            typical_duration_s=body.typical_duration_s,
+            metadata=body.metadata,
+        )
+        lab.register_workflow(tmpl)
+    except ValidationError as exc:
+        raise HTTPException(400, exc.errors()) from exc
+    return tmpl.model_dump(mode="json")
+
+
+# ---------------------------------------------------------------------------
+# Campaigns
+# ---------------------------------------------------------------------------
+
+
+def _make_planner(lab: Lab, kind: str, config: dict[str, Any], *, claude_policy: bool) -> Planner:
+    policy = None
+    if claude_policy:
+        policy = ClaudePolicyProvider(lab=lab, transport=ClaudeTransport())
+    kind = kind.lower()
+    if kind in ("heuristic", "", "none"):
+        from autolab.planners.base import Planner as _Planner
+
+        class _Heuristic(_Planner):
+            name = "heuristic"
+
+            def plan(self, context: PlanContext) -> list[ProposedStep]:  # type: ignore[override]
+                # With no explicit planner, default to a tiny random sweep over the first tool.
+                if not context.history or len(context.history) < (context.remaining_budget or 1):
+                    if lab.tools.list():
+                        decl = lab.tools.list()[0]
+                        return [
+                            ProposedStep(
+                                operation=decl.capability,
+                                inputs={"x": 0.5},
+                                decision={"planner": "heuristic", "note": "default stub"},
+                            )
+                        ]
+                return []
+
+        return _Heuristic(policy=policy or HeuristicPolicyProvider())
+    if kind == "claude":
+        return ClaudePlanner(
+            lab=lab,
+            transport=ClaudeTransport(),
+            policy=policy,
+        )
+    try:
+        return build_planner(kind, config)
+    except KeyError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@app.post("/campaigns")
+async def submit_campaign(body: CampaignRequest, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    scheduler = _scheduler(request)
+    try:
+        campaign = Campaign(
+            name=body.name,
+            description=body.description,
+            objective=Objective(**body.objective),
+            acceptance=(AcceptanceCriteria(**body.acceptance) if body.acceptance else None),
+            budget=body.budget,
+            parallelism=body.parallelism,
+        )
+    except ValidationError as exc:
+        raise HTTPException(400, exc.errors()) from exc
+
+    planner = _make_planner(
+        lab,
+        body.planner,
+        body.planner_config,
+        claude_policy=body.use_claude_policy,
+    )
+    await scheduler.submit(campaign, planner, priority=body.priority)
+    # If a scheduler loop is already running, _launch() will pick up the new state
+    # on the next tick. But if the user just booted the server, the scheduler.run()
+    # task may have already exited (no work). Relaunch if so.
+    if scheduler._campaigns[campaign.id]._task is None:
+        scheduler._launch(scheduler._campaigns[campaign.id])
+    return {
+        "ok": True,
+        "campaign_id": campaign.id,
+        "name": campaign.name,
+    }
+
+
+@app.get("/campaigns")
+async def list_campaigns(request: Request) -> list[dict[str, Any]]:
+    return _scheduler(request).status()
+
+
+@app.get("/campaigns/{campaign_id}")
+async def get_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
+    scheduler = _scheduler(request)
+    try:
+        state = scheduler._get(campaign_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    return {
+        "campaign_id": state.campaign.id,
+        "name": state.campaign.name,
+        "priority": state.priority,
+        "status": state.status,
+        "started_at": state.started_at.isoformat() if state.started_at else None,
+        "completed_at": state.completed_at.isoformat() if state.completed_at else None,
+        "objective": state.campaign.objective.model_dump(),
+        "budget": state.campaign.budget,
+        "error": state.error,
+        "summary": state.summary.model_dump(mode="json") if state.summary else None,
+    }
+
+
+@app.post("/campaigns/{campaign_id}/pause")
+async def pause_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
+    await _scheduler(request).pause(campaign_id)
+    return {"ok": True}
+
+
+@app.post("/campaigns/{campaign_id}/resume")
+async def resume_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
+    await _scheduler(request).resume(campaign_id)
+    return {"ok": True}
+
+
+@app.post("/campaigns/{campaign_id}/cancel")
+async def cancel_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
+    await _scheduler(request).cancel(campaign_id)
+    return {"ok": True}
+
+
+@app.post("/campaigns/{campaign_id}/intervene")
+async def intervene(
+    campaign_id: str, body: InterventionRequest, request: Request
+) -> dict[str, Any]:
+    lab = _lab(request)
+    inter = Intervention(
+        campaign_id=campaign_id,
+        body=body.body,
+        author=body.author,
+        payload=body.payload,
+    )
+    rec = await lab.record_intervention(inter)
+    return {"ok": True, "record_id": rec.id}
+
+
+# ---------------------------------------------------------------------------
+# Campaign designer (Claude)
+# ---------------------------------------------------------------------------
+
+
+@app.post("/campaigns/design")
+async def design_campaign(body: DesignRequest, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    designer = CampaignDesigner(lab=lab, transport=ClaudeTransport())
+    result = designer.design(body.text)
+    return {
+        "campaign": result.campaign_json,
+        "workflow": result.workflow_json,
+        "notes": result.notes,
+        "model": result.raw.model,
+        "offline": result.raw.offline,
+        "prompt_sha256": result.raw.prompt_hash,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Escalations
+# ---------------------------------------------------------------------------
+
+
+@app.get("/escalations")
+async def list_escalations(request: Request) -> list[dict[str, Any]]:
+    lab = _lab(request)
+    scheduler = _scheduler(request)
+    out: list[dict[str, Any]] = []
+    for cid in scheduler._campaigns:
+        for esc in lab.pending_escalations(cid):
+            out.append(
+                {
+                    "id": esc.id,
+                    "campaign_id": esc.campaign_id,
+                    "record_id": esc.record_id,
+                    "reason": esc.reason,
+                }
+            )
+    return out
+
+
+@app.post("/escalations/{escalation_id}/resolve")
+async def resolve_escalation(
+    escalation_id: str, body: EscalationResolutionRequest, request: Request
+) -> dict[str, Any]:
+    lab = _lab(request)
+    scheduler = _scheduler(request)
+    extra = None
+    if body.extra_step:
+        extra = ProposedStep(**body.extra_step)
+    resolution = EscalationResolution(
+        escalation_id=escalation_id,
+        action=body.action,  # type: ignore[arg-type]
+        reason=body.reason,
+        retry_inputs=body.retry_inputs,
+        extra_step=extra,
+    )
+    # Find which campaign owns it.
+    for cid in scheduler._campaigns:
+        pending = lab.pending_escalations(cid)
+        if any(e.id == escalation_id for e in pending):
+            lab.resolve_escalation(cid, escalation_id, resolution)
+            return {"ok": True}
+    raise HTTPException(404, f"escalation {escalation_id!r} not found")
+
+
+# ---------------------------------------------------------------------------
+# Ledger / records
+# ---------------------------------------------------------------------------
+
+
+@app.get("/ledger")
+async def ledger(
+    request: Request,
+    campaign_id: str | None = None,
+    experiment_id: str | None = None,
+    status: str | None = None,
+    limit: int = Query(200, ge=1, le=5000),
+    filter: str | None = None,
+) -> dict[str, Any]:
+    lab = _lab(request)
+    records = list(
+        lab.ledger.iter_records(
+            campaign_id=campaign_id,
+            experiment_id=experiment_id,
+            status=status,
+        )
+    )
+    if filter:
+        try:
+            records = query.apply(records, filter)
+        except query.QueryError as exc:
+            raise HTTPException(400, f"bad filter: {exc}") from exc
+    total = len(records)
+    # Latest first for the console.
+    records = list(reversed(records))[:limit]
+    return {
+        "total": total,
+        "records": [r.model_dump(mode="json") for r in records],
+    }
+
+
+@app.get("/records/{record_id}")
+async def get_record(record_id: str, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    rec = lab.ledger.get(record_id)
+    if rec is None:
+        raise HTTPException(404, f"record {record_id!r} not found")
+    anns = lab.ledger.annotations(record_id)
+    return {
+        "record": rec.model_dump(mode="json"),
+        "history": [r.model_dump(mode="json") for r in lab.ledger.history(record_id)],
+        "annotations": [a.model_dump(mode="json") for a in anns],
+    }
+
+
+@app.post("/records/{record_id}/extract")
+async def extract_annotations(record_id: str, request: Request) -> dict[str, Any]:
+    """Run the `annotation_extract` Interpretation Op on a Record's notes.
+
+    Produces a new Claim-style Record with tags + extracted structured
+    facts + confidence. The call itself is a Record, so every extraction
+    is auditable.
+    """
+    lab = _lab(request)
+    if not lab.tools.has("annotation_extract"):
+        raise HTTPException(503, "annotation_extract not registered on this Lab")
+    import uuid
+
+    from autolab.orchestrator import CampaignRun
+
+    session = lab.new_session()
+    run = CampaignRun(
+        lab_id=lab.lab_id,
+        campaign_id=f"extract-{uuid.uuid4().hex[:8]}",
+        session=session,
+    )
+    step = ProposedStep(
+        operation="annotation_extract",
+        inputs={"target_record_id": record_id},
+        decision={"triggered_by": "http"},
+    )
+    rec, gate = await lab.orchestrator.run_step(step, run)
+    return {
+        "ok": rec.record_status == "completed",
+        "record_id": rec.id,
+        "outputs": rec.outputs,
+        "gate": gate.result if gate else None,
+    }
+
+
+@app.post("/records/{record_id}/annotate")
+async def annotate_record(
+    record_id: str, body: AnnotationRequest, request: Request
+) -> dict[str, Any]:
+    lab = _lab(request)
+    ann = Annotation(
+        target_record_id=record_id,
+        kind="note",
+        body={"note": body.note, "tags": body.tags},
+        author=body.author,
+    )
+    try:
+        await lab.annotate(ann)
+    except Exception as exc:  # noqa: BLE001 — bubble up with a friendly status
+        raise HTTPException(400, str(exc)) from exc
+    return {"ok": True, "annotation_id": ann.id}
+
+
+@app.get("/export/ro-crate")
+async def export_ro_crate(
+    request: Request, campaign_id: str | None = None
+) -> dict[str, Any]:
+    from autolab.export import to_ro_crate
+
+    return to_ro_crate(_lab(request), campaign_id=campaign_id)
+
+
+@app.get("/export/prov")
+async def export_prov(
+    request: Request, campaign_id: str | None = None
+) -> dict[str, Any]:
+    from autolab.export import to_prov
+
+    return to_prov(_lab(request), campaign_id=campaign_id)
+
+
+@app.get("/samples/{sample_id}/history")
+async def sample_history(sample_id: str, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    records = lab.ledger.sample_history(sample_id)
+    return {
+        "sample_id": sample_id,
+        "lineage": lab.ledger.sample_lineage(sample_id),
+        "records": [r.model_dump(mode="json") for r in records],
+    }
+
+
+@app.get("/verify")
+async def verify(request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    bad = lab.verify_ledger()
+    return {"ok": not bad, "bad_record_ids": bad}
+
+
+# ---------------------------------------------------------------------------
+# ETAs / estimation
+# ---------------------------------------------------------------------------
+
+
+@app.get("/estimate/summary")
+async def estimate_summary(request: Request) -> list[dict[str, Any]]:
+    return EstimationEngine(_lab(request)).summary()
+
+
+@app.get("/estimate/eta")
+async def estimate_eta(request: Request, campaign_id: str) -> dict[str, Any]:
+    return EstimationEngine(_lab(request)).eta_for_campaign(campaign_id)
+
+
+@app.post("/estimate/workflow")
+async def estimate_workflow(body: dict[str, Any], request: Request) -> dict[str, Any]:
+    ops = list(body.get("operations") or [])
+    hint = body.get("resource_hint")
+    return EstimationEngine(_lab(request)).eta_for_workflow(ops, resource_hint=hint)
+
+
+# ---------------------------------------------------------------------------
+# Acceptance preview — for the designer UI.
+# ---------------------------------------------------------------------------
+
+
+@app.post("/acceptance/preview")
+async def acceptance_preview(body: dict[str, Any]) -> dict[str, Any]:
+    rules = (body.get("rules") or {}) if isinstance(body.get("rules"), dict) else {}
+    outputs = body.get("outputs") or {}
+    crit = AcceptanceCriteria(rules=rules)
+    verdict = evaluate_gate(crit, outputs)
+    return {
+        "result": verdict.result,
+        "reason": verdict.reason,
+        "details": {
+            k: {
+                "passed": d.passed,
+                "operator": d.operator,
+                "threshold": d.threshold,
+                "actual": d.actual,
+                "reason": d.reason,
+            }
+            for k, d in verdict.details.items()
+        },
+    }
+
+
+# ---------------------------------------------------------------------------
+# WebSocket
+# ---------------------------------------------------------------------------
+
+
+@app.websocket("/events")
+async def events_ws(ws: WebSocket) -> None:
+    mgr: ConnectionManager = ws.app.state.ws
+    await mgr.connect(ws)
+    try:
+        # Send an initial hello so the client knows it's connected.
+        await ws.send_json({"kind": "hello", "payload": {"ok": True}})
+        while True:
+            # We accept pings / arbitrary messages to keep the socket alive;
+            # server-side push is the primary flow.
+            try:
+                msg = await ws.receive_text()
+            except WebSocketDisconnect:
+                break
+            if msg == "ping":
+                await ws.send_json({"kind": "pong", "payload": {}})
+    finally:
+        await mgr.disconnect(ws)
+
+
+# ---------------------------------------------------------------------------
+# Health / root
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health", response_class=PlainTextResponse)
+async def health() -> str:
+    return "ok"
+
+
+@app.exception_handler(HTTPException)
+async def _httpexc_handler(_request: Request, exc: HTTPException) -> JSONResponse:
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail},
+    )

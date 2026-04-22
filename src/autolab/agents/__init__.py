@@ -1,12 +1,33 @@
-"""Two-tier Managed Agents.
+"""LLM-backed agent integrations.
 
-The Principal Agent decomposes a Campaign goal into hypotheses and spawns a
-Campaign Subagent in isolated context to pursue one. Built on Claude Managed
-Agents; Skills (domain knowledge, Anthropic SKILL.md format) live alongside
-in `src/autolab/skills/`.
-
-For the hackathon demo: exactly one Campaign Subagent, visibly context-isolated
-from the Principal. More looks like theatre.
+Today this exposes the Claude-native Planner / PolicyProvider / Campaign
+Designer.  Provider abstraction (LiteLLM etc.) is v2.
 """
 
 from __future__ import annotations
+
+from autolab.agents.claude import (
+    CLAUDE_MODEL_DEFAULT,
+    CampaignDesigner,
+    ClaudePlanner,
+    ClaudePolicyProvider,
+    ClaudeResponse,
+    ClaudeTransport,
+    DesignResult,
+    campaign_from_draft,
+    objective_from,
+    workflow_template_from_draft,
+)
+
+__all__ = [
+    "CLAUDE_MODEL_DEFAULT",
+    "CampaignDesigner",
+    "ClaudePlanner",
+    "ClaudePolicyProvider",
+    "ClaudeResponse",
+    "ClaudeTransport",
+    "DesignResult",
+    "campaign_from_draft",
+    "objective_from",
+    "workflow_template_from_draft",
+]

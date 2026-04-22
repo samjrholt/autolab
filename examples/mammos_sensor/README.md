@@ -154,6 +154,74 @@ solve the micromagnetic problem — the real thing, not a surrogate. On a
 fresh WSL install you can get real hysteresis-loop simulation in ~10
 minutes (see install guide below).
 
+## Recommended setup: pixi env inside WSL
+
+The cleanest way to get real backends is a dedicated **pixi project
+inside WSL** that autolab activates per call. Autolab has an
+`AUTOLAB_VM_PIXI_PROJECT` env var for exactly this — when set, every
+VM command is run as ``bash -c 'export PATH=$HOME/.pixi/bin:$PATH && cd <proj> && pixi run python -'``
+so the env's bin directory (and therefore OOMMF) ends up on `PATH`.
+
+### One-time WSL setup
+
+```bash
+# Inside WSL:
+curl -fsSL https://pixi.sh/install.sh | bash
+export PATH="$HOME/.pixi/bin:$PATH"
+
+mkdir -p ~/autolab-mammos && cd ~/autolab-mammos
+pixi init --channel conda-forge .
+
+# ubermag from conda-forge — brings OOMMF binary automatically.
+pixi add "python=3.11.*" pip ubermag
+
+# mammos requires pandas<2.3 (its conda-forge peers pin pandas>=2 so
+# lock both before installing the mammos pypi packages).
+pixi add "pandas<2.3" "packaging<25"
+pixi add --pypi mammos-entity mammos-mumag mammos-spindynamics mammos-ai ase
+
+# (Optional) Install MACE for real MLIP-based StructureRelax — ~2 GB.
+# pixi add --pypi mace-torch
+```
+
+### Running autolab against this env
+
+From the autolab repo on Windows:
+
+```bash
+# Windows Git Bash / PowerShell
+AUTOLAB_VM_PIXI_PROJECT=/home/sam/autolab-mammos \
+MSYS_NO_PATHCONV=1 MSYS2_ARG_CONV_EXCL="*" \
+pixi run python -m examples.mammos_sensor.run --mode single
+```
+
+(`MSYS_NO_PATHCONV=1` stops Git Bash from rewriting the Linux path.)
+
+Expected first block:
+
+```text
+VM: wsl.exe -d <default> -- python3 (pixi@/home/sam/autolab-mammos)  python=3.11.15
+Backend availability:
+  mace / mace_torch            [--] NOT INSTALLED                   StructureRelax -> real MLIP
+  mammos_ai                    [OK] 0.2.0                           IntrinsicMagnetics0K -> pre-trained DFT surrogate
+  mammos_spindynamics          [OK] 0.4.0                           FiniteTemperatureMagnetics -> UppASD + Kuzmin fit
+  ubermag (df+mm+oommfc)       [OK] 2025.6                          SensorMesh + MicromagneticHysteresis -> ubermag/OOMMF
+  mammos_mumag                 [OK] 0.11.0                          MicromagneticHysteresis -> finite-element (preferred)
+  OOMMF (binary or pip)        [OK] /home/sam/autolab-mammos/.pixi/envs/default/bin/oommf  required by ubermag to run OOMMF
+```
+
+And the workflow summary should show:
+
+```text
+  mesh           completed   backend=ubermag     ...
+  hysteresis     completed   backend=ubermag     Hc=21624A/m  Mr=1.32e+06
+  fom            completed   backend=analytic    sensitivity=1.494/T  ...
+```
+
+That `backend=ubermag` on the hysteresis step is the real OOMMF micromagnetic
+simulation — expect ~1-3 minutes per workflow run compared to the
+~2 seconds for an all-surrogate run.
+
 ## Installing real backends in WSL
 
 When you run `pixi run python -m examples.mammos_sensor.run`, the first

@@ -1,0 +1,1627 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>autolab console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              ink:    "#05070d",
+              panel:  "#0c1322",
+              panel2: "#111a2e",
+              panel3: "#162138",
+              line:   "#1e2a43",
+              line2:  "#273a5f",
+              accent: "#8bd4ff",    // cyan-ish
+              magenta:"#e879f9",
+              good:   "#4ade80",
+              warn:   "#fbbf24",
+              bad:    "#fb7185",
+              muted:  "#64748b",
+              ink2:   "#0a0f1a",
+            },
+            fontFamily: {
+              mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "monospace"],
+              display: ["Inter", "ui-sans-serif", "system-ui"],
+            },
+            boxShadow: {
+              "glow-accent": "0 0 0 1px rgba(139,212,255,0.35), 0 0 24px rgba(139,212,255,0.15)",
+              "glow-good":   "0 0 0 1px rgba(74,222,128,0.35), 0 0 18px rgba(74,222,128,0.15)",
+              "glow-bad":    "0 0 0 1px rgba(251,113,133,0.35), 0 0 18px rgba(251,113,133,0.15)",
+            },
+          },
+        },
+      };
+    </script>
+    <style>
+      :root {
+        --grid-bg: radial-gradient(1200px 800px at 10% -10%, rgba(139,212,255,0.08), transparent 60%),
+                   radial-gradient(800px 600px at 110% 0%, rgba(232,121,249,0.06), transparent 60%),
+                   #05070d;
+      }
+      html, body { background: var(--grid-bg); color: #e6edf3; }
+      body { font-feature-settings: "cv11","ss01"; }
+      .stripes {
+        background-image: repeating-linear-gradient(
+          45deg, rgba(139,212,255,0.18) 0 4px, rgba(139,212,255,0) 4px 9px);
+      }
+      .ring-glow-accent { box-shadow: 0 0 0 1px rgba(139,212,255,0.35), 0 0 12px rgba(139,212,255,0.25); }
+      .ring-glow-good   { box-shadow: 0 0 0 1px rgba(74,222,128,0.35),  0 0 10px rgba(74,222,128,0.20); }
+      .ring-glow-bad    { box-shadow: 0 0 0 1px rgba(251,113,133,0.35), 0 0 10px rgba(251,113,133,0.20); }
+      .gridlines {
+        background-image:
+          linear-gradient(rgba(30,42,67,0.35) 1px, transparent 1px),
+          linear-gradient(90deg, rgba(30,42,67,0.35) 1px, transparent 1px);
+        background-size: 24px 24px;
+      }
+      .title-glow {
+        text-shadow: 0 0 16px rgba(139,212,255,0.4);
+      }
+      .kbd {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        background: #0a0f1a;
+        border: 1px solid #1e2a43;
+        padding: 0 4px;
+        border-radius: 3px;
+        font-size: 10px;
+      }
+      ::-webkit-scrollbar { width: 8px; height: 8px; }
+      ::-webkit-scrollbar-thumb { background: #1e2a43; border-radius: 4px; }
+      ::-webkit-scrollbar-track { background: transparent; }
+      @keyframes livepulse {
+        0%, 100% { opacity: 0.9; }
+        50% { opacity: 0.45; }
+      }
+      .pulse-dot { animation: livepulse 1.4s ease-in-out infinite; }
+      @keyframes fadein {
+        from { opacity: 0; transform: translateY(2px); }
+        to   { opacity: 1; transform: translateY(0); }
+      }
+      .fade-in { animation: fadein 0.28s ease-out; }
+    </style>
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+    />
+  </head>
+  <body class="min-h-screen font-display">
+    <div id="root"></div>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script type="text/babel" data-presets="env,react">
+      const { useState, useEffect, useRef, useCallback, useMemo, useLayoutEffect } = React;
+
+      // ────────────────────────── utilities ──────────────────────────
+      const fmtTime = (iso) => iso ? new Date(iso).toLocaleTimeString() : "—";
+      const fmtDur = (s) => {
+        if (s == null || Number.isNaN(s)) return "—";
+        if (s < 60) return `${s.toFixed(1)}s`;
+        if (s < 3600) return `${(s / 60).toFixed(1)}m`;
+        return `${(s / 3600).toFixed(2)}h`;
+      };
+      const fmtNumber = (v, digits = 3) => {
+        if (v == null || Number.isNaN(v)) return "—";
+        const a = Math.abs(v);
+        if (a !== 0 && (a < 1e-2 || a >= 1e4)) return v.toExponential(digits);
+        return v.toFixed(digits);
+      };
+
+      const statusClass = (s) => ({
+        completed:  "bg-good/10 text-good border-good/30",
+        running:    "bg-accent/10 text-accent border-accent/40 ring-glow-accent",
+        pending:    "bg-muted/10 text-muted border-muted/30",
+        proposed:   "bg-muted/10 text-muted border-dashed border-muted/30",
+        failed:     "bg-bad/10 text-bad border-bad/40 ring-glow-bad",
+        soft_fail:  "bg-warn/10 text-warn border-warn/30",
+        paused:     "bg-warn/10 text-warn border-warn/20",
+      }[s] || "bg-muted/10 text-muted border-muted/20");
+
+      // ─────────────────────────── API ───────────────────────────────
+      const api = {
+        get: (p) => fetch(p).then(r => r.json()),
+        post: (p, body) => fetch(p, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body || {}),
+        }).then(r => r.json()),
+        del: (p) => fetch(p, { method: "DELETE" }).then(r => r.json()),
+      };
+
+      // ──────────────────────── hooks ────────────────────────────────
+      function useWs(onEvent) {
+        const [connected, setConnected] = useState(false);
+        useEffect(() => {
+          let closed = false; let ws;
+          const connect = () => {
+            const proto = window.location.protocol === "https:" ? "wss" : "ws";
+            ws = new WebSocket(`${proto}://${window.location.host}/events`);
+            ws.onopen = () => setConnected(true);
+            ws.onclose = () => {
+              setConnected(false);
+              if (!closed) setTimeout(connect, 1200);
+            };
+            ws.onmessage = (e) => { try { onEvent(JSON.parse(e.data)); } catch {} };
+          };
+          connect();
+          return () => { closed = true; ws && ws.close(); };
+        }, []);
+        return connected;
+      }
+
+      function usePolling(fn, ms) {
+        useEffect(() => {
+          fn(); const id = setInterval(fn, ms); return () => clearInterval(id);
+        }, []);
+      }
+
+      function useResize(ref) {
+        const [rect, setRect] = useState({ width: 0, height: 0 });
+        useLayoutEffect(() => {
+          if (!ref.current) return;
+          const ro = new ResizeObserver((entries) => {
+            for (const e of entries) setRect({
+              width: e.contentRect.width, height: e.contentRect.height,
+            });
+          });
+          ro.observe(ref.current);
+          return () => ro.disconnect();
+        }, []);
+        return rect;
+      }
+
+      // ─────────────────────── small atoms ───────────────────────────
+      const Pill = ({ status, children, title }) => (
+        <span title={title}
+          className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] border ${statusClass(status)}`}>
+          {children || status}
+        </span>
+      );
+
+      const Card = ({ title, children, right, className = "", kicker }) => (
+        <div className={`bg-panel/70 backdrop-blur-sm border border-line rounded-xl shadow-lg shadow-black/40 ${className}`}>
+          <div className="flex items-center justify-between px-3.5 py-2 border-b border-line">
+            <div className="flex items-center gap-2 text-[11px] tracking-widest text-muted uppercase">
+              <span className="w-1 h-3 bg-accent/60 rounded-sm" />
+              {title}
+              {kicker && <span className="text-[10px] text-magenta/70 normal-case tracking-normal">{kicker}</span>}
+            </div>
+            {right}
+          </div>
+          <div className="p-3.5">{children}</div>
+        </div>
+      );
+
+      const Button = ({ children, onClick, kind = "default", disabled, title }) => {
+        const cls = {
+          primary: "bg-accent/10 border-accent/50 text-accent hover:bg-accent/20 hover:border-accent",
+          danger:  "bg-bad/10 border-bad/50 text-bad hover:bg-bad/20",
+          ghost:   "bg-transparent border-line2 text-slate-300 hover:bg-panel2",
+          default: "bg-panel2 border-line2 text-slate-200 hover:bg-panel3",
+          magenta: "bg-magenta/10 border-magenta/50 text-magenta hover:bg-magenta/20",
+        }[kind] || "bg-panel2 border-line2 text-slate-200 hover:bg-panel3";
+        return (
+          <button title={title} disabled={disabled} onClick={onClick}
+            className={`text-xs px-2.5 py-1 border rounded-md transition-colors ${cls} ${disabled ? "opacity-40 cursor-not-allowed" : ""}`}>
+            {children}
+          </button>
+        );
+      };
+
+      const Metric = ({ label, value, unit, hint, tone = "accent" }) => {
+        const toneClass = {
+          accent: "text-accent", good: "text-good", warn: "text-warn", bad: "text-bad",
+          magenta: "text-magenta", slate: "text-slate-100",
+        }[tone] || "text-accent";
+        return (
+          <div className="bg-panel2/60 border border-line rounded-lg px-3 py-2">
+            <div className="text-[10px] uppercase tracking-widest text-muted">{label}</div>
+            <div className={`mt-0.5 text-xl font-semibold font-mono tabular-nums ${toneClass}`}>
+              {value}{unit && <span className="text-xs font-normal text-muted ml-1">{unit}</span>}
+            </div>
+            {hint && <div className="text-[10px] text-muted mt-0.5">{hint}</div>}
+          </div>
+        );
+      };
+
+      // ────────────────── canvas plotting primitives ─────────────────
+      function useDpiCanvas(ref, rect) {
+        useLayoutEffect(() => {
+          if (!ref.current || !rect.width || !rect.height) return;
+          const c = ref.current;
+          const dpr = window.devicePixelRatio || 1;
+          c.width = Math.round(rect.width * dpr);
+          c.height = Math.round(rect.height * dpr);
+          c.style.width = rect.width + "px";
+          c.style.height = rect.height + "px";
+          const ctx = c.getContext("2d");
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        }, [rect.width, rect.height]);
+      }
+
+      function axisBounds(values, pad = 0.08) {
+        if (!values.length) return [-1, 1];
+        let lo = Infinity, hi = -Infinity;
+        for (const v of values) { if (v < lo) lo = v; if (v > hi) hi = v; }
+        if (lo === hi) { lo -= 1; hi += 1; }
+        const span = hi - lo;
+        return [lo - span * pad, hi + span * pad];
+      }
+
+      function drawGrid(ctx, x0, y0, w, h, xTicks = 6, yTicks = 4) {
+        ctx.save();
+        ctx.strokeStyle = "rgba(38,58,95,0.35)";
+        ctx.lineWidth = 1;
+        for (let i = 0; i <= xTicks; i++) {
+          const x = x0 + (w * i) / xTicks;
+          ctx.beginPath(); ctx.moveTo(x, y0); ctx.lineTo(x, y0 + h); ctx.stroke();
+        }
+        for (let j = 0; j <= yTicks; j++) {
+          const y = y0 + (h * j) / yTicks;
+          ctx.beginPath(); ctx.moveTo(x0, y); ctx.lineTo(x0 + w, y); ctx.stroke();
+        }
+        ctx.restore();
+      }
+
+      // ─────────────────── Hysteresis loop card ──────────────────────
+      function HysteresisCard({ record }) {
+        const containerRef = useRef(null);
+        const canvasRef = useRef(null);
+        const rect = useResize(containerRef);
+        useDpiCanvas(canvasRef, rect);
+
+        // Detect the two real-tool shapes:
+        //  (a) superellipse_hysteresis  → outputs.loop = {H:[], M:[]}, plus scalar Ms via inputs.Ms
+        //  (b) mammos.micromagnetic_hysteresis → outputs.H_A_per_m, outputs.M_A_per_m
+        const { H, M, Ms, shape } = useMemo(() => {
+          const o = record?.outputs || {};
+          if (o.loop && Array.isArray(o.loop.H) && Array.isArray(o.loop.M)) {
+            return { H: o.loop.H, M: o.loop.M, Ms: record.inputs?.Ms, shape: "superellipse" };
+          }
+          if (Array.isArray(o.H_A_per_m) && Array.isArray(o.M_A_per_m)) {
+            return { H: o.H_A_per_m, M: o.M_A_per_m, Ms: o.Mr_A_per_m, shape: "mammos" };
+          }
+          return { H: null, M: null, Ms: null, shape: null };
+        }, [record?.id]);
+
+        useLayoutEffect(() => {
+          if (!canvasRef.current || !rect.width || !rect.height || !H || !M) return;
+          const ctx = canvasRef.current.getContext("2d");
+          const W = rect.width, Hh = rect.height;
+          ctx.clearRect(0, 0, W, Hh);
+          const pad = { l: 44, r: 14, t: 14, b: 30 };
+          const pw = W - pad.l - pad.r, ph = Hh - pad.t - pad.b;
+          const [xl, xr] = axisBounds(H, 0.02);
+          const [yl, yr] = axisBounds(M, 0.05);
+          const x = (v) => pad.l + ((v - xl) / (xr - xl)) * pw;
+          const y = (v) => pad.t + ph - ((v - yl) / (yr - yl)) * ph;
+
+          // Background grid.
+          drawGrid(ctx, pad.l, pad.t, pw, ph, 8, 5);
+
+          // Axes (through zero).
+          ctx.strokeStyle = "rgba(139,212,255,0.45)";
+          ctx.lineWidth = 1;
+          const xz = x(0), yz = y(0);
+          if (xz >= pad.l && xz <= pad.l + pw) {
+            ctx.beginPath(); ctx.moveTo(xz, pad.t); ctx.lineTo(xz, pad.t + ph); ctx.stroke();
+          }
+          if (yz >= pad.t && yz <= pad.t + ph) {
+            ctx.beginPath(); ctx.moveTo(pad.l, yz); ctx.lineTo(pad.l + pw, yz); ctx.stroke();
+          }
+
+          // Loop fill (subtle).
+          ctx.beginPath();
+          for (let i = 0; i < H.length; i++) {
+            const px = x(H[i]), py = y(M[i]);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.closePath();
+          const grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + ph);
+          grad.addColorStop(0, "rgba(139,212,255,0.14)");
+          grad.addColorStop(1, "rgba(232,121,249,0.10)");
+          ctx.fillStyle = grad; ctx.fill();
+
+          // Loop stroke (glow).
+          ctx.save();
+          ctx.shadowColor = "rgba(139,212,255,0.55)";
+          ctx.shadowBlur = 8;
+          ctx.strokeStyle = "#8bd4ff";
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          for (let i = 0; i < H.length; i++) {
+            const px = x(H[i]), py = y(M[i]);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+          ctx.restore();
+
+          // Marker at H=0 on ascending branch.
+          const mid = Math.floor(H.length / 2);
+          let nearest = mid;
+          for (let i = mid; i < H.length; i++) {
+            if (Math.abs(H[i]) < Math.abs(H[nearest])) nearest = i;
+          }
+          ctx.fillStyle = "#e879f9";
+          ctx.beginPath(); ctx.arc(x(H[nearest]), y(M[nearest]), 3.5, 0, Math.PI * 2); ctx.fill();
+
+          // Labels.
+          ctx.fillStyle = "#64748b";
+          ctx.font = "10px JetBrains Mono, ui-monospace, monospace";
+          ctx.fillText("H (A/m)", pad.l + pw - 46, Hh - 10);
+          ctx.save(); ctx.translate(12, pad.t + 30); ctx.rotate(-Math.PI / 2);
+          ctx.fillText("M (A/m)", 0, 0); ctx.restore();
+          // Tick labels (just ends for cleanliness).
+          ctx.fillStyle = "#94a3b8";
+          ctx.fillText(fmtNumber(xl, 2), pad.l + 2, Hh - 14);
+          const xrLabel = fmtNumber(xr, 2);
+          ctx.fillText(xrLabel, pad.l + pw - ctx.measureText(xrLabel).width - 4, Hh - 14);
+          ctx.fillText(fmtNumber(yl, 2), 4, pad.t + ph - 2);
+          ctx.fillText(fmtNumber(yr, 2), 4, pad.t + 12);
+        }, [rect.width, rect.height, H, M]);
+
+        if (!H || !M) return null;
+        const o = record.outputs || {};
+        return (
+          <Card title="hysteresis loop"
+                kicker={shape === "superellipse" ? "superellipse sensor" : "mammos micromag"}
+                right={<span className="text-[10px] text-muted font-mono">{record.id?.slice(0, 14)}</span>}>
+            <div className="grid grid-cols-5 gap-3">
+              <div ref={containerRef} className="relative col-span-3 h-64 bg-ink2/50 border border-line rounded-lg overflow-hidden gridlines">
+                <canvas ref={canvasRef} className="absolute inset-0" />
+              </div>
+              <div className="col-span-2 grid grid-cols-2 gap-2 content-start">
+                {shape === "superellipse" && (
+                  <>
+                    <Metric label="Sensitivity" value={fmtNumber(o.sensitivity, 3)} unit="1/T" tone="accent" />
+                    <Metric label="Hc" value={fmtNumber(o.Hc, 2)} unit="A/m" tone="magenta" />
+                    <Metric label="Mr / Ms" value={fmtNumber(o.Mr_over_Ms, 3)} tone="good" />
+                    <Metric label="Linear range" value={fmtNumber(o.linear_range * 1e3, 2)} unit="mT" tone="slate" />
+                    <div className="col-span-2 text-[10px] text-muted">
+                      backend: <span className="text-slate-300 font-mono">{record.module || "—"}</span>
+                      {o.geometry_area_nm2 != null && (
+                        <> · area <span className="text-slate-300 font-mono">{fmtNumber(o.geometry_area_nm2, 1)} nm²</span></>
+                      )}
+                    </div>
+                  </>
+                )}
+                {shape === "mammos" && (
+                  <>
+                    <Metric label="Hc" value={fmtNumber(o.Hc_A_per_m, 2)} unit="A/m" tone="magenta" />
+                    <Metric label="Mr" value={fmtNumber(o.Mr_A_per_m, 2)} unit="A/m" tone="good" />
+                    <Metric label="H sweep" value={fmtNumber(o.H_sweep_max_A_per_m, 2)} unit="A/m" tone="slate" />
+                    <Metric label="N points" value={H.length} tone="accent" />
+                    <div className="col-span-2 text-[10px] text-muted">
+                      backend: <span className="text-slate-300 font-mono">{o.backend}</span>
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          </Card>
+        );
+      }
+
+      // ───────────────── Kuzmin / Ms(T) curve card ───────────────────
+      function KuzminCard({ record }) {
+        const containerRef = useRef(null);
+        const canvasRef = useRef(null);
+        const rect = useResize(containerRef);
+        useDpiCanvas(canvasRef, rect);
+
+        const { T_K, m, targetT, targetM, Tc } = useMemo(() => {
+          const o = record?.outputs || {}; const i = record?.inputs || {};
+          if (!o.Tc_K || !o.Ms_T_A_per_m) return {};
+          const Tc = o.Tc_K;
+          const T_K = []; const m = [];
+          // Plot Kuzmin closed form m(t) = (1 - s*t^1.5 - (1-s)*t^p)^(1/3), s=0.5, p=2.5.
+          const s = 0.5, p = 2.5;
+          for (let k = 0; k <= 100; k++) {
+            const t = k / 100 * 0.999;
+            const inside = 1 - s * Math.pow(t, 1.5) - (1 - s) * Math.pow(t, p);
+            const mk = inside > 0 ? Math.pow(inside, 1 / 3) : 0;
+            T_K.push(t * Tc);
+            m.push(mk);
+          }
+          return {
+            T_K, m, Tc,
+            targetT: i.target_temp_k ?? 300,
+            targetM: o.m_T_over_Ms0 ?? (o.Ms_T_A_per_m / (i.Ms0_A_per_m || 1e9)),
+          };
+        }, [record?.id]);
+
+        useLayoutEffect(() => {
+          if (!canvasRef.current || !rect.width || !rect.height || !T_K) return;
+          const ctx = canvasRef.current.getContext("2d");
+          const W = rect.width, H = rect.height;
+          ctx.clearRect(0, 0, W, H);
+          const pad = { l: 44, r: 14, t: 14, b: 30 };
+          const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+          const [xl, xr] = [0, Tc * 1.02];
+          const [yl, yr] = [0, 1.02];
+          const x = (v) => pad.l + ((v - xl) / (xr - xl)) * pw;
+          const y = (v) => pad.t + ph - ((v - yl) / (yr - yl)) * ph;
+          drawGrid(ctx, pad.l, pad.t, pw, ph, 6, 4);
+
+          // Filled area under curve.
+          ctx.beginPath();
+          ctx.moveTo(x(T_K[0]), y(0));
+          for (let i = 0; i < T_K.length; i++) ctx.lineTo(x(T_K[i]), y(m[i]));
+          ctx.lineTo(x(T_K[T_K.length - 1]), y(0));
+          ctx.closePath();
+          const grad = ctx.createLinearGradient(0, pad.t, 0, pad.t + ph);
+          grad.addColorStop(0, "rgba(139,212,255,0.18)");
+          grad.addColorStop(1, "rgba(139,212,255,0.00)");
+          ctx.fillStyle = grad; ctx.fill();
+
+          // Line.
+          ctx.strokeStyle = "#8bd4ff";
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          for (let i = 0; i < T_K.length; i++) {
+            const px = x(T_K[i]), py = y(m[i]);
+            if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py);
+          }
+          ctx.stroke();
+
+          // Tc marker.
+          ctx.strokeStyle = "rgba(251,113,133,0.6)"; ctx.setLineDash([3, 3]);
+          ctx.beginPath(); ctx.moveTo(x(Tc), pad.t); ctx.lineTo(x(Tc), pad.t + ph); ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.fillStyle = "#fb7185";
+          ctx.font = "10px JetBrains Mono, monospace";
+          ctx.fillText(`Tc = ${Tc.toFixed(0)} K`, x(Tc) - 72, pad.t + 12);
+
+          // Target point.
+          ctx.fillStyle = "#e879f9";
+          ctx.beginPath(); ctx.arc(x(targetT), y(targetM), 5, 0, Math.PI * 2); ctx.fill();
+          ctx.strokeStyle = "#e879f9";
+          ctx.lineWidth = 1;
+          ctx.beginPath(); ctx.moveTo(x(targetT), y(targetM)); ctx.lineTo(x(targetT), pad.t + ph); ctx.stroke();
+
+          // Labels.
+          ctx.fillStyle = "#64748b";
+          ctx.font = "10px JetBrains Mono, monospace";
+          ctx.fillText("T (K)", pad.l + pw - 30, H - 10);
+          ctx.save(); ctx.translate(12, pad.t + 50); ctx.rotate(-Math.PI / 2);
+          ctx.fillText("m(T) / Ms(0)", 0, 0); ctx.restore();
+          ctx.fillStyle = "#94a3b8";
+          ctx.fillText("0", pad.l - 8, pad.t + ph - 2);
+          ctx.fillText("1", pad.l - 8, pad.t + 10);
+        }, [rect.width, rect.height, T_K]);
+
+        if (!T_K) return null;
+        const o = record.outputs || {};
+        return (
+          <Card title="finite-temperature magnetics" kicker="Kuzmin scaling">
+            <div className="grid grid-cols-5 gap-3">
+              <div ref={containerRef} className="col-span-3 relative h-56 bg-ink2/50 border border-line rounded-lg overflow-hidden gridlines">
+                <canvas ref={canvasRef} className="absolute inset-0" />
+              </div>
+              <div className="col-span-2 grid grid-cols-2 gap-2 content-start">
+                <Metric label="Tc" value={o.Tc_K?.toFixed(0)} unit="K" tone="bad" />
+                <Metric label="m(T)/Ms0" value={fmtNumber(o.m_T_over_Ms0, 3)} tone="magenta" />
+                <Metric label="Ms(T)" value={fmtNumber(o.Ms_T_A_per_m / 1e6, 3)} unit="MA/m" tone="accent" />
+                <Metric label="K1(T)" value={fmtNumber(o.K1_T_J_per_m3 / 1e6, 3)} unit="MJ/m³" tone="good" />
+                <div className="col-span-2 text-[10px] text-muted">
+                  backend <span className="text-slate-300 font-mono">{o.backend}</span>
+                </div>
+              </div>
+            </div>
+          </Card>
+        );
+      }
+
+      // ───────────── Relaxed structure summary (mammos.relax) ────────
+      function RelaxCard({ record }) {
+        const o = record?.outputs || {}; const i = record?.inputs || {};
+        const comp = i.composition || {};
+        const total = Object.values(comp).reduce((a, b) => a + Number(b || 0), 0) || 1;
+        return (
+          <Card title="relaxed structure" kicker={i.prototype}>
+            <div className="grid grid-cols-5 gap-3">
+              <div className="col-span-3 space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {Object.entries(comp).map(([el, frac]) => (
+                    <span key={el}
+                      className="inline-flex items-center gap-1 px-2 py-1 bg-panel2 border border-line2 rounded-md font-mono text-[11px]">
+                      <span className="text-accent">{el}</span>
+                      <span className="text-muted">×{Number(frac).toFixed(1)}</span>
+                      <span className="text-[9px] text-muted">({((frac / total) * 100).toFixed(0)}%)</span>
+                    </span>
+                  ))}
+                </div>
+                <div className="text-[10px] text-muted">
+                  backend <span className="text-slate-300 font-mono">{o.backend || "—"}</span>
+                </div>
+              </div>
+              <Metric label="a" value={fmtNumber(o.a_ang, 3)} unit="Å" tone="accent" />
+              <Metric label="c" value={fmtNumber(o.c_ang, 3)} unit="Å" tone="good" />
+              <Metric label="V" value={fmtNumber(o.volume_ang3, 2)} unit="Å³" tone="magenta" />
+              <Metric label="E / atom" value={fmtNumber(o.energy_ev_per_atom, 3)} unit="eV" tone="slate" />
+            </div>
+          </Card>
+        );
+      }
+
+      // ───────────── Sensor figure-of-merit tile ─────────────────────
+      function SensorFomCard({ record }) {
+        const o = record?.outputs || {};
+        return (
+          <Card title="sensor figure of merit">
+            <div className="grid grid-cols-4 gap-2">
+              <Metric label="Sensitivity" value={fmtNumber(o.sensitivity_per_T, 3)} unit="1/T" tone="accent" />
+              <Metric label="Linear range" value={fmtNumber((o.linear_range_T || 0) * 1e3, 2)} unit="mT" tone="magenta" />
+              <Metric label="Hc" value={fmtNumber(o.Hc_A_per_m, 2)} unit="A/m" tone="warn" />
+              <Metric label="Mr / Ms" value={fmtNumber(o.Mr_over_Ms, 3)} tone="good" />
+            </div>
+          </Card>
+        );
+      }
+
+      // ───────────────── Best-so-far plot per campaign ───────────────
+      function BestSoFarCard({ campaign, records }) {
+        const containerRef = useRef(null);
+        const canvasRef = useRef(null);
+        const rect = useResize(containerRef);
+        useDpiCanvas(canvasRef, rect);
+
+        const { key, direction, series, bestLine } = useMemo(() => {
+          const key = campaign?.objective_key;
+          const direction = (campaign?.direction || "maximise");
+          if (!key) return {};
+          const relevant = records
+            .filter(r => r.campaign_id === campaign.campaign_id
+                      && r.record_status === "completed"
+                      && r.outputs && r.outputs[key] != null)
+            .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+          const series = relevant.map((r, i) => ({ i, v: Number(r.outputs[key]), id: r.id }));
+          const bestLine = []; let best = null;
+          for (const p of series) {
+            if (best == null) best = p.v;
+            else best = direction === "minimise" ? Math.min(best, p.v) : Math.max(best, p.v);
+            bestLine.push({ i: p.i, v: best });
+          }
+          return { key, direction, series, bestLine };
+        }, [campaign?.campaign_id, records]);
+
+        useLayoutEffect(() => {
+          if (!canvasRef.current || !rect.width || !rect.height || !series || !series.length) return;
+          const ctx = canvasRef.current.getContext("2d");
+          const W = rect.width, H = rect.height;
+          ctx.clearRect(0, 0, W, H);
+          const pad = { l: 42, r: 12, t: 12, b: 24 };
+          const pw = W - pad.l - pad.r, ph = H - pad.t - pad.b;
+          const xMax = Math.max(series.length - 1, 1);
+          const vs = series.map(p => p.v);
+          const [yl, yr] = axisBounds(vs, 0.1);
+          const x = (i) => pad.l + (i / xMax) * pw;
+          const y = (v) => pad.t + ph - ((v - yl) / (yr - yl)) * ph;
+          drawGrid(ctx, pad.l, pad.t, pw, ph, 6, 4);
+
+          // Scatter of individual runs.
+          ctx.fillStyle = "rgba(139,212,255,0.35)";
+          for (const p of series) {
+            ctx.beginPath(); ctx.arc(x(p.i), y(p.v), 3, 0, Math.PI * 2); ctx.fill();
+          }
+          // Best-so-far step line.
+          ctx.strokeStyle = "#e879f9";
+          ctx.lineWidth = 1.8;
+          ctx.beginPath();
+          for (let i = 0; i < bestLine.length; i++) {
+            const px = x(bestLine[i].i), py = y(bestLine[i].v);
+            if (i === 0) ctx.moveTo(px, py); else {
+              ctx.lineTo(x(bestLine[i].i), y(bestLine[i - 1].v));
+              ctx.lineTo(px, py);
+            }
+          }
+          ctx.stroke();
+
+          // Labels.
+          ctx.fillStyle = "#64748b"; ctx.font = "10px JetBrains Mono, monospace";
+          ctx.fillText("step", pad.l + pw - 26, H - 8);
+          ctx.save(); ctx.translate(12, pad.t + 26); ctx.rotate(-Math.PI / 2);
+          ctx.fillText(key, 0, 0); ctx.restore();
+          ctx.fillStyle = "#94a3b8";
+          ctx.fillText(fmtNumber(yl, 2), 4, pad.t + ph - 2);
+          ctx.fillText(fmtNumber(yr, 2), 4, pad.t + 10);
+        }, [rect.width, rect.height, series]);
+
+        if (!series || !series.length) return null;
+        const currentBest = bestLine[bestLine.length - 1]?.v;
+        return (
+          <Card title="best-so-far"
+                kicker={`${key} · ${direction}`}>
+            <div ref={containerRef} className="relative h-44 bg-ink2/50 border border-line rounded-lg overflow-hidden gridlines">
+              <canvas ref={canvasRef} className="absolute inset-0" />
+            </div>
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <Metric label="best" value={fmtNumber(currentBest, 3)} tone="magenta" />
+              <Metric label="runs" value={series.length} tone="accent" />
+              <Metric label="status" value={campaign.status} tone={campaign.status === "completed" ? "good" : "accent"} />
+            </div>
+          </Card>
+        );
+      }
+
+      // ─────────── WorkflowDAG — layered topological render ───────────
+      function computeDagLayers(steps) {
+        const byId = {}; const inDeg = {}; const succ = {};
+        for (const s of steps) { byId[s.step_id] = s; inDeg[s.step_id] = 0; succ[s.step_id] = []; }
+        for (const s of steps) for (const d of (s.depends_on || [])) {
+          if (byId[d]) { inDeg[s.step_id] = (inDeg[s.step_id] || 0) + 1; succ[d].push(s.step_id); }
+        }
+        const layers = []; let ready = Object.keys(inDeg).filter(k => inDeg[k] === 0);
+        while (ready.length) {
+          layers.push(ready.sort());
+          const next = [];
+          for (const id of ready) for (const n of succ[id]) {
+            inDeg[n] -= 1;
+            if (inDeg[n] === 0) next.push(n);
+          }
+          ready = next;
+        }
+        return layers;
+      }
+
+      function WorkflowDag({ workflow, stepStatus }) {
+        const containerRef = useRef(null);
+        const rect = useResize(containerRef);
+        const canvasRef = useRef(null);
+        useDpiCanvas(canvasRef, rect);
+        const layers = useMemo(() => computeDagLayers(workflow.steps || []), [workflow]);
+
+        useLayoutEffect(() => {
+          if (!canvasRef.current || !rect.width || !rect.height) return;
+          const ctx = canvasRef.current.getContext("2d");
+          const W = rect.width, H = rect.height;
+          ctx.clearRect(0, 0, W, H);
+          if (!layers.length) return;
+          const colW = W / layers.length;
+          const positions = {};
+          layers.forEach((col, ci) => {
+            col.forEach((id, ri) => {
+              positions[id] = { x: colW * ci + colW / 2, y: H * (ri + 1) / (col.length + 1) };
+            });
+          });
+          ctx.strokeStyle = "rgba(139,212,255,0.35)"; ctx.lineWidth = 1;
+          for (const s of workflow.steps) for (const d of (s.depends_on || [])) {
+            const a = positions[d], b = positions[s.step_id];
+            if (!a || !b) continue;
+            ctx.beginPath();
+            ctx.moveTo(a.x + 38, a.y);
+            const cx = (a.x + b.x) / 2;
+            ctx.bezierCurveTo(cx, a.y, cx, b.y, b.x - 38, b.y);
+            ctx.stroke();
+            ctx.save();
+            ctx.fillStyle = "rgba(139,212,255,0.6)";
+            ctx.beginPath();
+            ctx.moveTo(b.x - 38, b.y);
+            ctx.lineTo(b.x - 44, b.y - 3);
+            ctx.lineTo(b.x - 44, b.y + 3);
+            ctx.closePath(); ctx.fill();
+            ctx.restore();
+          }
+          for (const s of workflow.steps) {
+            const p = positions[s.step_id]; if (!p) continue;
+            const status = stepStatus[s.step_id] || "proposed";
+            const tones = {
+              completed: { fill: "rgba(74,222,128,0.22)",  stroke: "rgba(74,222,128,0.85)",  text: "#86efac" },
+              running:   { fill: "rgba(139,212,255,0.25)", stroke: "rgba(139,212,255,0.9)",  text: "#8bd4ff" },
+              failed:    { fill: "rgba(251,113,133,0.25)", stroke: "rgba(251,113,133,0.9)",  text: "#fb7185" },
+              pending:   { fill: "rgba(148,163,184,0.12)", stroke: "rgba(148,163,184,0.4)",  text: "#94a3b8" },
+              proposed:  { fill: "rgba(148,163,184,0.06)", stroke: "rgba(148,163,184,0.3)",  text: "#94a3b8" },
+              soft_fail: { fill: "rgba(251,191,36,0.22)",  stroke: "rgba(251,191,36,0.8)",   text: "#fde68a" },
+            };
+            const t = tones[status] || tones.proposed;
+            ctx.fillStyle = t.fill; ctx.strokeStyle = t.stroke; ctx.lineWidth = 1.3;
+            const w = 76, h = 26;
+            const x = p.x - w / 2, y = p.y - h / 2;
+            const r = 6;
+            ctx.beginPath();
+            ctx.moveTo(x + r, y);
+            ctx.lineTo(x + w - r, y); ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+            ctx.lineTo(x + w, y + h - r); ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+            ctx.lineTo(x + r, y + h); ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+            ctx.lineTo(x, y + r); ctx.quadraticCurveTo(x, y, x + r, y);
+            ctx.closePath();
+            if (status === "running") { ctx.shadowColor = t.stroke; ctx.shadowBlur = 8; }
+            ctx.fill(); ctx.shadowBlur = 0; ctx.stroke();
+            ctx.fillStyle = t.text;
+            ctx.font = "10px JetBrains Mono, ui-monospace, monospace";
+            const label = s.step_id.length > 10 ? s.step_id.slice(0, 9) + "…" : s.step_id;
+            ctx.fillText(label, p.x - ctx.measureText(label).width / 2, p.y + 3);
+          }
+        }, [rect.width, rect.height, layers, stepStatus]);
+
+        return (
+          <div ref={containerRef} className="relative w-full h-40 bg-ink2/50 border border-line rounded-lg overflow-hidden gridlines">
+            <canvas ref={canvasRef} className="absolute inset-0" />
+          </div>
+        );
+      }
+
+      const MAMMOS_PRESETS = {
+        FeCo:     { composition: { Fe: 0.5, Co: 0.5 },          prototype: "FeCo"     },
+        Nd2Fe14B: { composition: { Nd: 2, Fe: 14, B: 1 },        prototype: "Nd2Fe14B" },
+        Sm2Co17:  { composition: { Sm: 2, Co: 17 },              prototype: "Sm2Co17"  },
+        SmCo5:    { composition: { Sm: 1, Co: 5 },               prototype: "SmCo5"    },
+      };
+
+      function WorkflowLauncher({ workflows, records, onRan }) {
+        const [selected, setSelected] = useState(workflows[0]?.name || "");
+        useEffect(() => {
+          if (!workflows.length) return;
+          if (!workflows.some(w => w.name === selected)) setSelected(workflows[0].name);
+        }, [workflows]);
+        const [busy, setBusy] = useState(false);
+        const [lastCid, setLastCid] = useState(null);
+        const [err, setErr] = useState("");
+        const [preset, setPreset] = useState("FeCo");
+        const [geom, setGeom] = useState({ a_nm: 120, b_nm: 80, n: 2.5, thickness_nm: 5 });
+        const [targetT, setTargetT] = useState(300);
+
+        const wf = workflows.find(w => w.name === selected);
+        const stepStatus = useMemo(() => {
+          const out = {};
+          if (!wf || !lastCid) return out;
+          const mine = records.filter(r => r.campaign_id === lastCid);
+          for (const s of wf.steps) {
+            const match = mine.find(r => r.operation === s.operation
+                && (r.experiment_id || "").includes(`wf-${s.step_id}`));
+            const anyOp = mine.find(r => r.operation === s.operation);
+            const m = match || anyOp;
+            if (m) out[s.step_id] = m.record_status;
+          }
+          return out;
+        }, [wf, records, lastCid]);
+
+        const buildOverrides = () => {
+          if (selected === "mammos_sensor") {
+            const p = MAMMOS_PRESETS[preset];
+            return {
+              relax:        { composition: p.composition, prototype: p.prototype },
+              intrinsic_0k: { prototype: p.prototype },
+              finite_t:     { prototype: p.prototype, target_temp_k: Number(targetT) },
+              mesh:         { a_nm: Number(geom.a_nm), b_nm: Number(geom.b_nm),
+                              n: Number(geom.n), thickness_nm: Number(geom.thickness_nm), cell_size_nm: 3.0 },
+              hysteresis:   { H_max_A_per_m: 8e4, n_steps: 31 },
+              fom:          {},
+            };
+          }
+          return {};
+        };
+
+        const run = async () => {
+          setBusy(true); setErr("");
+          try {
+            const body = { input_overrides: buildOverrides(), max_parallel: 2 };
+            const r = await api.post(`/workflows/${encodeURIComponent(selected)}/run`, body);
+            if (r.ok != null) setLastCid(r.campaign_id);
+            else if (r.error) setErr(typeof r.error === "string" ? r.error : JSON.stringify(r.error));
+            onRan?.();
+          } catch (e) { setErr(String(e)); }
+          finally { setBusy(false); }
+        };
+
+        return (
+          <div className="space-y-2 text-xs">
+            <div className="flex items-center gap-2">
+              <select value={selected} onChange={e => setSelected(e.target.value)}
+                className="bg-panel2 border border-line2 rounded-md px-2 py-1 text-[11px] flex-1 font-mono">
+                {workflows.map(w => <option key={w.name} value={w.name}>{w.name} · {w.steps?.length} steps</option>)}
+                {!workflows.length && <option>— none registered —</option>}
+              </select>
+              <Button kind="primary" disabled={!selected || busy} onClick={run}>
+                {busy ? "Running…" : "Run workflow"}
+              </Button>
+            </div>
+            {selected === "mammos_sensor" && (
+              <div className="space-y-1.5 bg-panel2/60 border border-line2 rounded-md p-2 fade-in">
+                <div className="flex items-center gap-2">
+                  <span className="text-muted text-[10px] uppercase tracking-widest w-16">material</span>
+                  {Object.keys(MAMMOS_PRESETS).map(k => (
+                    <button key={k} onClick={() => setPreset(k)}
+                      className={`px-2 py-0.5 border rounded-md font-mono text-[10px] transition-colors ${
+                        preset === k ? "bg-accent/15 border-accent text-accent" : "bg-panel2 border-line2 text-slate-300 hover:bg-panel3"
+                      }`}>{k}</button>
+                  ))}
+                </div>
+                <div className="grid grid-cols-4 gap-1">
+                  {["a_nm", "b_nm", "n", "thickness_nm"].map(k => (
+                    <label key={k} className="flex flex-col text-[10px] text-muted">
+                      <span className="uppercase tracking-widest">{k}</span>
+                      <input type="number" step="0.5" value={geom[k]}
+                        onChange={e => setGeom({ ...geom, [k]: e.target.value })}
+                        className="bg-panel border border-line rounded px-1.5 py-0.5 font-mono text-[11px] text-slate-200"/>
+                    </label>
+                  ))}
+                </div>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted text-[10px] uppercase tracking-widest w-16">T (K)</span>
+                  <input type="number" value={targetT}
+                    onChange={e => setTargetT(e.target.value)}
+                    className="bg-panel border border-line rounded px-1.5 py-0.5 font-mono text-[11px] text-slate-200 w-24"/>
+                </div>
+              </div>
+            )}
+            {wf && <WorkflowDag workflow={wf} stepStatus={stepStatus} />}
+            {err && <div className="text-bad">{err}</div>}
+            {lastCid && wf && (
+              <div className="text-[10px] text-muted">
+                last run: <span className="font-mono text-slate-300">{lastCid}</span> ·{" "}
+                {Object.values(stepStatus).filter(v => v === "completed").length}/{wf.steps.length} complete
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // ─────────── Capability → viz router ────────────
+      // Only real tools get custom cards. Stub tools fall through.
+      function OperationViz({ record }) {
+        if (!record) return null;
+        const op = record.operation;
+        if (record.record_status !== "completed") return null;
+        if (op === "superellipse_hysteresis" || op === "mammos.micromagnetic_hysteresis") {
+          return <HysteresisCard record={record} />;
+        }
+        if (op === "mammos.finite_temperature_magnetics") {
+          return <KuzminCard record={record} />;
+        }
+        if (op === "mammos.relax_structure") {
+          return <RelaxCard record={record} />;
+        }
+        if (op === "mammos.sensor_fom") {
+          return <SensorFomCard record={record} />;
+        }
+        return null;
+      }
+
+      // ────────────────────── Resource Gantt ─────────────────────────
+      function ResourceGantt({ resources, records }) {
+        const lanes = useMemo(() => {
+          const map = {};
+          for (const r of resources) map[r.name] = { resource: r, records: [] };
+          for (const rec of records) if (rec.resource_name && map[rec.resource_name]) {
+            map[rec.resource_name].records.push(rec);
+          }
+          for (const k of Object.keys(map)) {
+            map[k].records.sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
+          }
+          return Object.values(map);
+        }, [resources, records]);
+
+        const [now, setNow] = useState(() => Date.now());
+        useEffect(() => { const id = setInterval(() => setNow(Date.now()), 500); return () => clearInterval(id); }, []);
+
+        const windowMs = 5 * 60 * 1000;
+        const start = now - windowMs;
+        const offsetPct = iso => {
+          const t = new Date(iso).getTime();
+          return Math.max(0, Math.min(100, ((t - start) / windowMs) * 100));
+        };
+
+        return (
+          <div className="space-y-1.5">
+            {lanes.map(({ resource, records }) => (
+              <div key={resource.name} className="flex items-center gap-3">
+                <div className="w-44 shrink-0">
+                  <div className="text-xs text-slate-100 font-medium truncate">{resource.name}</div>
+                  <div className="text-[10px] text-muted flex items-center gap-1">
+                    <span>{resource.kind}</span>
+                    <span>·</span>
+                    <span className={
+                      resource.state === "busy" ? "text-accent flex items-center gap-1" :
+                      resource.state === "idle" ? "text-good" :
+                      resource.state === "error" ? "text-bad" : "text-warn"
+                    }>
+                      {resource.state === "busy" && <span className="w-1.5 h-1.5 bg-accent rounded-full pulse-dot" />}
+                      {resource.state}
+                    </span>
+                  </div>
+                </div>
+                <div className="relative flex-1 h-8 bg-ink2 border border-line2 rounded-md overflow-hidden gridlines">
+                  {/* now marker */}
+                  <div className="absolute top-0 bottom-0 w-px bg-accent/60" style={{ left: "100%" }} />
+                  {records.slice(-60).map(r => {
+                    const left = offsetPct(r.created_at);
+                    const rightIso = r.finalised_at || new Date().toISOString();
+                    const right = offsetPct(rightIso);
+                    const w = Math.max(0.7, right - left);
+                    const cls = {
+                      completed: "bg-good/25 border-good/50 text-good",
+                      running:   "bg-accent/25 border-accent/50 text-accent stripes",
+                      failed:    "bg-bad/30 border-bad/60 text-bad",
+                      soft_fail: "bg-warn/25 border-warn/50 text-warn",
+                      pending:   "bg-muted/20 border-muted/40 text-muted",
+                    }[r.record_status] || "bg-muted/10 border-muted/30 text-muted";
+                    return (
+                      <div key={r.id + r.record_status}
+                        title={`${r.operation}\n${r.record_status}\n${r.duration_ms ? r.duration_ms + "ms" : ""}`}
+                        style={{ left: `${left}%`, width: `${w}%` }}
+                        className={`absolute top-0.5 bottom-0.5 text-[10px] px-1.5 border rounded flex items-center truncate font-mono ${cls}`}>
+                        {r.operation}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+            {lanes.length === 0 && <div className="text-xs text-muted py-4">No resources registered.</div>}
+            <div className="flex items-center justify-between pt-1 text-[10px] text-muted font-mono">
+              <span>−5 min</span><span>now ▸</span>
+            </div>
+          </div>
+        );
+      }
+
+      // ─────────────────────── Plan tree ─────────────────────────────
+      function PlanTree({ campaigns, records }) {
+        return (
+          <div className="space-y-3">
+            {campaigns.length === 0 && <div className="text-xs text-muted">No campaigns yet. Try the <em>Design campaign</em> box.</div>}
+            {campaigns.map(c => {
+              const recs = records.filter(r => r.campaign_id === c.campaign_id);
+              const byExp = {};
+              for (const r of recs) {
+                const k = r.experiment_id || "_single";
+                (byExp[k] = byExp[k] || []).push(r);
+              }
+              return (
+                <div key={c.campaign_id} className="border border-line2 rounded-lg overflow-hidden">
+                  <div className="flex items-center justify-between px-3 py-2 bg-gradient-to-r from-panel2 to-panel3">
+                    <div>
+                      <div className="text-sm font-semibold text-slate-50">{c.name}</div>
+                      <div className="text-[10px] text-muted font-mono">
+                        {c.campaign_id.slice(0, 16)} · priority {c.priority} · obj {c.objective_key}
+                      </div>
+                    </div>
+                    <Pill status={c.status} />
+                  </div>
+                  <div className="p-2 space-y-1.5">
+                    {Object.entries(byExp).map(([exp, rs]) => (
+                      <div key={exp} className="pl-3 border-l border-line2">
+                        <div className="text-[10px] text-muted py-0.5 font-mono">{exp}</div>
+                        <div className="flex flex-wrap gap-1">
+                          {rs.map(r => (
+                            <span key={r.id + r.record_status}
+                              className={`text-[10px] px-1.5 py-0.5 rounded border font-mono ${statusClass(r.record_status)}`}
+                              title={`${r.operation}\ninputs ${JSON.stringify(r.inputs)}\noutputs ${JSON.stringify(r.outputs)}`}>
+                              {r.operation}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
+
+      // ───────────────────── Ledger feed ─────────────────────────────
+      function LedgerFeed({ records, onSelect, selectedId }) {
+        return (
+          <div className="max-h-[460px] overflow-auto text-xs">
+            {records.length === 0 && <div className="text-muted py-3">Ledger is empty.</div>}
+            {records.map(r => (
+              <button key={r.id + r.record_status}
+                onClick={() => onSelect(r)}
+                className={`w-full text-left py-1.5 px-2 flex items-center gap-2 border-l-2 transition-colors ${
+                  selectedId === r.id ? "border-accent bg-accent/5" : "border-transparent hover:bg-panel2/60"
+                }`}>
+                <span className="w-14 shrink-0 text-muted font-mono tabular-nums">{fmtTime(r.created_at)}</span>
+                <Pill status={r.record_status} />
+                <span className="font-semibold text-slate-100 shrink-0 truncate max-w-[180px]">{r.operation}</span>
+                <span className="text-muted shrink-0 font-mono text-[10px]">{r.resource_name || "—"}</span>
+                <span className="text-muted font-mono text-[10px] truncate">{(r.checksum || "").slice(0, 12)}</span>
+              </button>
+            ))}
+          </div>
+        );
+      }
+
+      // ───────────────────── Event feed ──────────────────────────────
+      function EventFeed({ events }) {
+        return (
+          <div className="max-h-[280px] overflow-auto text-[11px] font-mono">
+            {events.slice(-200).reverse().map((e, i) => (
+              <div key={i} className="flex gap-2 py-0.5 hover:bg-panel2/40 px-1 rounded fade-in">
+                <span className="text-muted tabular-nums">{fmtTime(e.timestamp)}</span>
+                <span className={
+                  e.kind?.includes("failed") ? "text-bad" :
+                  e.kind?.includes("completed") ? "text-good" :
+                  e.kind?.includes("running") ? "text-accent" :
+                  e.kind?.includes("campaign") ? "text-magenta" : "text-slate-300"
+                }>{e.kind}</span>
+                <span className="text-slate-400 truncate">
+                  {e.payload && (e.payload.record?.operation || e.payload.name || e.payload.campaign_id || "")}
+                </span>
+              </div>
+            ))}
+            {events.length === 0 && <div className="text-muted">Waiting for events…</div>}
+          </div>
+        );
+      }
+
+      // ──────────────── Add-resource form ────────────────────────────
+      function AddResourceForm({ onCreated }) {
+        const [form, setForm] = useState({ name: "", kind: "computer", capabilities: "{}", description: "" });
+        const [err, setErr] = useState("");
+        const submit = async () => {
+          let caps = {};
+          try { caps = form.capabilities ? JSON.parse(form.capabilities) : {}; }
+          catch { setErr("Capabilities must be JSON"); return; }
+          const res = await api.post("/resources", {
+            name: form.name, kind: form.kind, capabilities: caps,
+            description: form.description, typical_operation_durations: {},
+          });
+          if (res.error) setErr(res.error);
+          else { setErr(""); setForm({ ...form, name: "" }); onCreated?.(); }
+        };
+        return (
+          <div className="space-y-2 text-xs">
+            <div className="grid grid-cols-2 gap-2">
+              <input className="bg-panel2 border border-line2 rounded-md px-2 py-1 font-mono text-[11px]"
+                placeholder="name (tube-furnace-A)"
+                value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}/>
+              <input className="bg-panel2 border border-line2 rounded-md px-2 py-1 font-mono text-[11px]"
+                placeholder="kind (tube_furnace)"
+                value={form.kind} onChange={e => setForm({ ...form, kind: e.target.value })}/>
+            </div>
+            <input className="w-full bg-panel2 border border-line2 rounded-md px-2 py-1 text-[11px]"
+              placeholder="description (optional)"
+              value={form.description} onChange={e => setForm({ ...form, description: e.target.value })}/>
+            <textarea rows={3}
+              className="w-full bg-panel2 border border-line2 rounded-md px-2 py-1 font-mono text-[11px]"
+              placeholder='capabilities JSON (e.g. {"max_temp_k":1400,"atmosphere":"Ar"})'
+              value={form.capabilities} onChange={e => setForm({ ...form, capabilities: e.target.value })}/>
+            <div className="flex items-center gap-2">
+              <Button kind="primary" onClick={submit} disabled={!form.name}>Register resource</Button>
+              {err && <span className="text-bad">{err}</span>}
+            </div>
+          </div>
+        );
+      }
+
+      // ──────────── Campaign designer ─────────────────────────────────
+      function CampaignDesigner({ status, onSubmitted }) {
+        const defaultText = (status?.tools || []).some(t => t.capability === "superellipse_hysteresis")
+          ? "Maximise small-signal sensitivity of a superellipse sensor element. Vary Ms, K1, a, b, n. Accept when sensitivity >= 1.5 1/T. Use a simple Bayesian optimiser; budget 12 runs."
+          : "Describe a goal. Claude will propose a draft Campaign + workflow for your approval.";
+        const [text, setText] = useState(defaultText);
+        const [draft, setDraft] = useState(null);
+        const [notes, setNotes] = useState("");
+        const [busy, setBusy] = useState(false);
+        const [err, setErr] = useState("");
+        const design = async () => {
+          setBusy(true); setErr("");
+          try {
+            const r = await api.post("/campaigns/design", { text });
+            setDraft(r); setNotes(r.notes || "");
+          } catch (e) { setErr(String(e)); }
+          finally { setBusy(false); }
+        };
+        const submit = async () => {
+          if (!draft?.campaign) return;
+          const c = draft.campaign;
+          // Choose a planner matching what the user asked for.
+          const lowered = text.toLowerCase();
+          const planner = lowered.includes("random")
+            ? "heuristic"
+            : ((status?.planners_available || []).includes("bo") ? "bo" : "heuristic");
+          const planner_config = {};
+          if (planner === "bo" && (status?.tools || []).length) {
+            // Seed BO with the first tool's scalar inputs.
+            const tool = (status.tools || []).find(t => t.capability === "superellipse_hysteresis") || status.tools[0];
+            planner_config.operation = tool.capability;
+            // Reasonable demo parameter space for the superellipse.
+            if (tool.capability === "superellipse_hysteresis") {
+              planner_config.parameter_space = {
+                Ms: { type: "float", low: 6e5, high: 1.6e6 },
+                K1: { type: "float", low: 0, high: 1e4 },
+                a:  { type: "float", low: 80, high: 240 },
+                b:  { type: "float", low: 60, high: 200 },
+                n:  { type: "float", low: 2, high: 6 },
+              };
+              planner_config.fixed_inputs = {
+                A_ex: 1.3e-11, thickness: 5.0, H_max: 8e4, cell_size: 3.0, n_steps: 41,
+              };
+              planner_config.initial_random = 3;
+              planner_config.candidate_pool = 512;
+            }
+          }
+          const body = {
+            name: c.name || "designed-campaign",
+            description: c.description,
+            objective: c.objective,
+            acceptance: c.acceptance,
+            budget: c.budget ?? 12,
+            parallelism: c.parallelism ?? 1,
+            priority: 50,
+            planner,
+            planner_config,
+            use_claude_policy: !!status?.claude_configured,
+          };
+          const r = await api.post("/campaigns", body);
+          if (r.ok) { setDraft(null); onSubmitted?.(); }
+          else setErr(r.error || "submit failed");
+        };
+        return (
+          <div className="space-y-2 text-xs">
+            <div className="text-[10px] text-muted">
+              Describe a goal. Claude proposes a Campaign + workflow; you approve before anything runs.{" "}
+              {status && !status.claude_configured && (
+                <span className="text-warn">(ANTHROPIC_API_KEY unset — offline stub.)</span>
+              )}
+            </div>
+            <textarea rows={3} className="w-full bg-panel2 border border-line2 rounded-md px-2 py-1"
+              value={text} onChange={e => setText(e.target.value)}/>
+            <div className="flex items-center gap-2 flex-wrap">
+              <Button kind="primary" disabled={busy || !text.trim()} onClick={design}>
+                {busy ? "Designing…" : "Design campaign"}
+              </Button>
+              {draft && <Button kind="magenta" onClick={submit}>Approve &amp; submit</Button>}
+              {err && <span className="text-bad">{err}</span>}
+            </div>
+            {draft && (
+              <div className="bg-panel2/80 border border-line2 rounded-md p-2 space-y-2 fade-in">
+                <div className="text-[10px] uppercase tracking-widest text-muted">Draft (editable in-browser is a v2 idea; for now we send this verbatim):</div>
+                <pre className="text-[11px] font-mono overflow-auto whitespace-pre-wrap">{JSON.stringify(draft.campaign, null, 2)}</pre>
+                {draft.workflow && (
+                  <>
+                    <div className="text-[10px] uppercase tracking-widest text-muted">Workflow suggestion</div>
+                    <pre className="text-[11px] font-mono overflow-auto whitespace-pre-wrap">{JSON.stringify(draft.workflow, null, 2)}</pre>
+                  </>
+                )}
+                {notes && <div className="text-[11px] text-warn">{notes}</div>}
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // ───────────────── Record detail drawer ────────────────────────
+      function RecordDetail({ record, onClose }) {
+        const [data, setData] = useState(null);
+        useEffect(() => {
+          if (!record) return setData(null);
+          api.get(`/records/${record.id}`).then(setData);
+        }, [record && record.id]);
+        if (!record) return null;
+        return (
+          <div className="fixed right-0 top-0 bottom-0 w-[560px] bg-panel/95 border-l border-line2 shadow-2xl z-50 overflow-auto backdrop-blur-md fade-in">
+            <div className="flex items-center justify-between p-3 border-b border-line">
+              <div>
+                <div className="text-sm text-slate-100 font-semibold">{record.operation}</div>
+                <div className="text-[10px] text-muted font-mono">{record.id}</div>
+              </div>
+              <Button kind="ghost" onClick={onClose}>Close ✕</Button>
+            </div>
+            <div className="p-3 space-y-3 text-xs">
+              <div className="flex gap-2 items-center">
+                <Pill status={record.record_status} />
+                {record.failure_mode && <span className="text-bad">{record.failure_mode}</span>}
+                {record.outcome_class && <span className="text-accent">{record.outcome_class}</span>}
+                {record.gate_result && <span className="text-muted">gate: {record.gate_result}</span>}
+              </div>
+              <OperationViz record={record} />
+              {record.sample_id && <SampleLineage sampleId={record.sample_id} />}
+              <details open>
+                <summary className="cursor-pointer text-muted text-[10px] uppercase tracking-widest">inputs</summary>
+                <pre className="bg-panel2 p-2 rounded text-[11px] overflow-auto mt-1">{JSON.stringify(record.inputs, null, 2)}</pre>
+              </details>
+              <details open>
+                <summary className="cursor-pointer text-muted text-[10px] uppercase tracking-widest">outputs</summary>
+                <pre className="bg-panel2 p-2 rounded text-[11px] overflow-auto mt-1">{JSON.stringify(record.outputs, null, 2)}</pre>
+              </details>
+              <div>
+                <div className="text-muted text-[10px] uppercase tracking-widest">checksum</div>
+                <div className="font-mono text-[11px] break-all text-accent">{record.checksum}</div>
+              </div>
+              {data?.annotations?.length ? (
+                <div>
+                  <div className="text-muted text-[10px] uppercase tracking-widest">annotations ({data.annotations.length})</div>
+                  <div className="space-y-1 mt-1">
+                    {data.annotations.map(a => (
+                      <div key={a.id} className="bg-panel2 p-2 rounded border border-line fade-in">
+                        <div className="flex gap-2 text-[10px] text-muted">
+                          <span>{a.author}</span><span>{a.kind}</span><span>{fmtTime(a.created_at)}</span>
+                        </div>
+                        <pre className="text-[11px] mt-1 whitespace-pre-wrap">{JSON.stringify(a.body, null, 2)}</pre>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+              <AnnotateBox recordId={record.id} onDone={() => api.get(`/records/${record.id}`).then(setData)} />
+            </div>
+          </div>
+        );
+      }
+
+      function SampleLineage({ sampleId }) {
+        const [data, setData] = useState(null);
+        useEffect(() => {
+          api.get(`/samples/${sampleId}/history`).then(setData);
+        }, [sampleId]);
+        if (!data) return null;
+        return (
+          <div className="bg-panel2/70 border border-line2 rounded-lg p-2 fade-in">
+            <div className="text-muted text-[10px] uppercase tracking-widest mb-1">
+              sample lineage · {data.lineage.length} ancestor{data.lineage.length === 1 ? "" : "s"}
+            </div>
+            <div className="flex items-center gap-1 flex-wrap">
+              {data.lineage.slice().reverse().map((sid, i, arr) => (
+                <React.Fragment key={sid}>
+                  <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded border ${
+                    sid === sampleId ? "bg-magenta/15 text-magenta border-magenta/50" : "bg-panel border-line2 text-slate-400"
+                  }`}>{sid.slice(0, 12)}</span>
+                  {i < arr.length - 1 && <span className="text-muted">→</span>}
+                </React.Fragment>
+              ))}
+            </div>
+            <div className="text-[10px] text-muted mt-1.5">
+              {data.records.length} record{data.records.length === 1 ? "" : "s"} touched this sample
+              {data.records.length > 0 && (
+                <ul className="mt-1 ml-3 list-disc list-inside space-y-0.5">
+                  {data.records.slice(0, 6).map(r => (
+                    <li key={r.id + r.record_status} className="truncate">
+                      <span className="font-mono text-slate-300">{r.operation}</span> ·{" "}
+                      <span className="text-muted">{r.record_status}</span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          </div>
+        );
+      }
+
+      function AnnotateBox({ recordId, onDone }) {
+        const [note, setNote] = useState("");
+        const [extracting, setExtracting] = useState(false);
+        const [extracted, setExtracted] = useState(null);
+        const extract = async () => {
+          setExtracting(true); setExtracted(null);
+          try {
+            const r = await api.post(`/records/${recordId}/extract`, {});
+            setExtracted(r);
+            onDone?.();
+          } finally { setExtracting(false); }
+        };
+        return (
+          <div className="border-t border-line pt-3 space-y-2">
+            <div className="text-muted text-[10px] uppercase tracking-widest">Add note (hashed, append-only)</div>
+            <textarea rows={2} className="w-full bg-panel2 border border-line2 rounded-md px-2 py-1 text-[11px]"
+              placeholder="tube-furnace-A ran hot today"
+              value={note} onChange={e => setNote(e.target.value)}/>
+            <div className="flex items-center gap-2">
+              <Button kind="primary" onClick={async () => {
+                if (!note.trim()) return;
+                await api.post(`/records/${recordId}/annotate`, { note });
+                setNote(""); onDone?.();
+              }}>Append note</Button>
+              <Button kind="magenta" onClick={extract} disabled={extracting}>
+                {extracting ? "Extracting…" : "Extract structured facts"}
+              </Button>
+            </div>
+            {extracted && (
+              <div className="bg-panel2/70 border border-line2 rounded p-2 fade-in">
+                <div className="text-[10px] text-muted uppercase tracking-widest">annotation_extract · Claim</div>
+                <pre className="text-[11px] mt-1 whitespace-pre-wrap overflow-auto">
+                  {JSON.stringify(extracted.outputs, null, 2)}
+                </pre>
+              </div>
+            )}
+          </div>
+        );
+      }
+
+      // ────────────────── Intervention box ───────────────────────────
+      function InterventionBox({ campaigns }) {
+        const [cid, setCid] = useState("");
+        const [body, setBody] = useState("");
+        useEffect(() => { if (!cid && campaigns[0]) setCid(campaigns[0].campaign_id); }, [campaigns, cid]);
+        const send = async () => {
+          if (!cid || !body.trim()) return;
+          await api.post(`/campaigns/${cid}/intervene`, { body });
+          setBody("");
+        };
+        return (
+          <div className="space-y-2 text-xs">
+            <select className="bg-panel2 border border-line2 rounded-md px-2 py-1 w-full text-[11px]"
+              value={cid} onChange={e => setCid(e.target.value)}>
+              {campaigns.map(c => <option key={c.campaign_id} value={c.campaign_id}>{c.name} · {c.status}</option>)}
+            </select>
+            <textarea rows={3} className="w-full bg-panel2 border border-line2 rounded-md px-2 py-1"
+              placeholder="Free-text intervention (lands as a hashed Record)"
+              value={body} onChange={e => setBody(e.target.value)}/>
+            <Button kind="primary" onClick={send} disabled={!cid || !body.trim()}>Submit intervention</Button>
+          </div>
+        );
+      }
+
+      // ───────────────── Tools / ETA table ───────────────────────────
+      function EstimationTable({ rows }) {
+        return (
+          <div className="overflow-auto">
+            <table className="w-full text-xs">
+              <thead className="text-muted text-[10px] uppercase tracking-widest">
+                <tr><th className="text-left py-1">Operation</th><th className="text-left">Resource</th>
+                    <th className="text-right">Declared</th><th className="text-right">Estimate</th>
+                    <th className="text-left">Source</th><th className="text-right">Samples</th></tr>
+              </thead>
+              <tbody>
+                {rows.map(r => (
+                  <tr key={r.operation} className="border-t border-line">
+                    <td className="py-1 font-mono text-slate-200">{r.operation}</td>
+                    <td className="text-muted">{r.resource_kind || "—"}</td>
+                    <td className="text-right text-muted font-mono">{fmtDur(r.declared_seconds)}</td>
+                    <td className="text-right text-accent font-mono">{fmtDur(r.estimate_seconds)}</td>
+                    <td className="text-muted">{r.source}</td>
+                    <td className="text-right font-mono">{r.n_samples}</td>
+                  </tr>
+                ))}
+                {rows.length === 0 && <tr><td colSpan="6" className="text-muted py-2">No tools registered.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+        );
+      }
+
+      // ───────────────── Campaigns control ───────────────────────────
+      function CampaignsPanel({ campaigns, onRefresh, etaByCampaign }) {
+        return (
+          <div className="space-y-1.5 text-xs">
+            {campaigns.map(c => {
+              const eta = etaByCampaign[c.campaign_id];
+              return (
+                <div key={c.campaign_id} className="bg-panel2/70 border border-line2 rounded-lg p-2">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <div className="font-semibold text-slate-50 truncate">{c.name}</div>
+                      <div className="text-[10px] text-muted font-mono">{c.campaign_id.slice(0, 16)}</div>
+                    </div>
+                    <Pill status={c.status} />
+                  </div>
+                  <div className="mt-1 flex items-center justify-between text-[10px] text-muted">
+                    <span>obj {c.objective_key} · budget {c.budget ?? "∞"}</span>
+                    {eta && (
+                      <span className="font-mono text-accent">
+                        ETA {fmtDur(eta.remaining_seconds)}
+                      </span>
+                    )}
+                  </div>
+                  <div className="mt-1.5 flex gap-1">
+                    <Button onClick={() => api.post(`/campaigns/${c.campaign_id}/pause`).then(onRefresh)}>Pause</Button>
+                    <Button onClick={() => api.post(`/campaigns/${c.campaign_id}/resume`).then(onRefresh)}>Resume</Button>
+                    <Button kind="danger" onClick={() => api.post(`/campaigns/${c.campaign_id}/cancel`).then(onRefresh)}>Cancel</Button>
+                  </div>
+                </div>
+              );
+            })}
+            {campaigns.length === 0 && <div className="text-muted">No campaigns.</div>}
+          </div>
+        );
+      }
+
+      // ─────────────────────── Main app ──────────────────────────────
+      function App() {
+        const [status, setStatus] = useState(null);
+        const [records, setRecords] = useState([]);
+        const [events, setEvents] = useState([]);
+        const [selected, setSelected] = useState(null);
+        const [filter, setFilter] = useState("");
+        const [etaByCampaign, setEtaByCampaign] = useState({});
+
+        const refresh = useCallback(async () => {
+          const [s, l] = await Promise.all([api.get("/status"), api.get("/ledger?limit=500")]);
+          setStatus(s); setRecords(l.records || []);
+        }, []);
+
+        const refreshFiltered = useCallback(async () => {
+          const url = filter ? `/ledger?limit=500&filter=${encodeURIComponent(filter)}` : `/ledger?limit=500`;
+          const r = await api.get(url); setRecords(r.records || []);
+        }, [filter]);
+
+        useEffect(() => { refresh(); }, []);
+
+        const connected = useWs((msg) => {
+          setEvents(prev => [...prev.slice(-500), msg]);
+          if (msg.kind?.startsWith("record.") || msg.kind?.startsWith("campaign.") || msg.kind?.startsWith("resource.")) {
+            refresh();
+          }
+        });
+
+        usePolling(async () => {
+          if (!status) return;
+          const next = {};
+          for (const c of status.campaigns || []) {
+            if (c.status === "running" || c.status === "queued") {
+              next[c.campaign_id] = await api.get(`/estimate/eta?campaign_id=${c.campaign_id}`);
+            }
+          }
+          setEtaByCampaign(next);
+        }, 4000);
+
+        const counts = status?.record_counts || {};
+
+        // Pick the latest "interesting" record for the hero viz area.
+        const latestCompleted = useMemo(
+          () => records.find(r => r.record_status === "completed" && (
+            r.operation === "superellipse_hysteresis" ||
+            r.operation === "mammos.micromagnetic_hysteresis" ||
+            r.operation === "mammos.finite_temperature_magnetics" ||
+            r.operation === "mammos.relax_structure" ||
+            r.operation === "mammos.sensor_fom"
+          )),
+          [records]
+        );
+
+        return (
+          <div className="max-w-[1680px] mx-auto p-4 space-y-4">
+            {/* Header */}
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <div className="w-8 h-8 rounded-md bg-gradient-to-br from-accent to-magenta shadow-glow-accent flex items-center justify-center">
+                    <span className="text-ink font-bold text-lg">α</span>
+                  </div>
+                  <div>
+                    <div className="text-xl font-semibold text-slate-50 title-glow tracking-tight">
+                      autolab <span className="text-muted text-xs tracking-wider uppercase">console</span>
+                    </div>
+                    <div className="text-[10px] text-muted font-mono">
+                      {status?.lab_id || "…"} · {status?.total_records ?? 0} records ·{" "}
+                      <span className={connected ? "text-good" : "text-bad"}>
+                        {connected ? "● live" : "○ disconnected"}
+                      </span>{" "}
+                      · claude:{" "}
+                      <span className={status?.claude_configured ? "text-good" : "text-warn"}>
+                        {status?.claude_configured ? "configured" : "offline stub"}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <div className="flex gap-2 text-xs">
+                {[
+                  ["completed", "good"], ["running", "accent"], ["pending", "slate"],
+                  ["failed", "bad"], ["soft_fail", "warn"],
+                ].map(([k, tone]) => (
+                  <div key={k} className="bg-panel/60 border border-line rounded-lg px-3 py-1.5 min-w-[86px]">
+                    <div className={`text-xl font-mono tabular-nums ${
+                      tone === "good" ? "text-good" :
+                      tone === "accent" ? "text-accent" :
+                      tone === "bad" ? "text-bad" :
+                      tone === "warn" ? "text-warn" : "text-slate-100"
+                    }`}>{counts[k] || 0}</div>
+                    <div className="text-[10px] text-muted uppercase tracking-widest">{k}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Hero row: Gantt + Plan tree */}
+            <div className="grid grid-cols-2 gap-4">
+              <Card title="Resources — live Gantt" kicker="5 min window">
+                <ResourceGantt resources={status?.resources || []} records={records} />
+              </Card>
+              <Card title="Plan tree">
+                <PlanTree campaigns={status?.campaigns || []} records={records} />
+              </Card>
+            </div>
+
+            {/* Workflow launcher + DAG */}
+            {(status?.workflows || []).length > 0 && (
+              <div className="grid grid-cols-3 gap-4">
+                <Card className="col-span-2" title="Workflow launcher" kicker="multi-step DAG">
+                  <WorkflowLauncher
+                    workflows={status?.workflows || []}
+                    records={records}
+                    onRan={refresh}
+                  />
+                </Card>
+                <Card title="Registered workflows">
+                  <div className="text-xs space-y-1.5">
+                    {(status?.workflows || []).map(w => (
+                      <div key={w.name} className="bg-panel2/60 border border-line2 rounded-md p-2">
+                        <div className="font-semibold text-slate-50">{w.name}</div>
+                        <div className="text-[10px] text-muted">{w.description || "—"}</div>
+                        <div className="text-[10px] text-muted mt-1 font-mono">
+                          {w.steps?.length} steps · typical {fmtDur(w.typical_duration_s)}
+                        </div>
+                      </div>
+                    ))}
+                    {!(status?.workflows || []).length && (
+                      <div className="text-muted">No workflows registered.</div>
+                    )}
+                  </div>
+                </Card>
+              </div>
+            )}
+
+            {/* Physics: best-so-far + real-tool viz */}
+            <div className="grid grid-cols-2 gap-4">
+              {(status?.campaigns || [])
+                .filter(c => ["running", "completed", "paused"].includes(c.status))
+                .slice(0, 1)
+                .map(c => <BestSoFarCard key={c.campaign_id} campaign={c} records={records} />)}
+              {latestCompleted && <OperationViz record={latestCompleted} />}
+            </div>
+
+            {/* Ledger + events */}
+            <div className="grid grid-cols-3 gap-4">
+              <Card title="Ledger feed" className="col-span-2"
+                right={
+                  <div className="flex gap-1.5">
+                    <input placeholder='filter: outputs.score >= 0.5 and record.record_status = "completed"'
+                      value={filter} onChange={e => setFilter(e.target.value)}
+                      className="bg-panel2 border border-line2 rounded-md px-2 py-0.5 text-[11px] w-[380px] font-mono"/>
+                    <Button onClick={refreshFiltered}>Apply</Button>
+                    <Button kind="ghost" onClick={() => { setFilter(""); refresh(); }}>Clear</Button>
+                  </div>
+                }>
+                <LedgerFeed records={records} onSelect={setSelected} selectedId={selected?.id} />
+              </Card>
+              <Card title="Event stream" kicker="WebSocket /events">
+                <EventFeed events={events} />
+              </Card>
+            </div>
+
+            {/* Campaigns / designer / intervention */}
+            <div className="grid grid-cols-3 gap-4">
+              <Card title="Campaigns" right={<span className="text-[10px] text-muted">ETA polled every 4 s</span>}>
+                <CampaignsPanel campaigns={status?.campaigns || []} onRefresh={refresh} etaByCampaign={etaByCampaign} />
+              </Card>
+              <Card title="Design campaign from free text" kicker="claude">
+                <CampaignDesigner status={status} onSubmitted={refresh} />
+              </Card>
+              <Card title="Intervention" kicker="hashed record">
+                <InterventionBox campaigns={status?.campaigns || []} />
+              </Card>
+            </div>
+
+            {/* Add resource + Estimation */}
+            <div className="grid grid-cols-3 gap-4">
+              <Card title="Add resource">
+                <AddResourceForm onCreated={refresh} />
+              </Card>
+              <Card title="Duration estimates" className="col-span-2"
+                right={<span className="text-[10px] text-muted">learned from ledger</span>}>
+                <EstimationTable rows={status?.estimation_summary || []} />
+              </Card>
+            </div>
+
+            <div className="text-[10px] text-muted text-center pt-2">
+              autolab α · FastAPI + WS · append-only hashed ledger · press{" "}
+              <span className="kbd">Esc</span> to close detail
+            </div>
+
+            {/* Drawer */}
+            <RecordDetail record={selected} onClose={() => setSelected(null)} />
+          </div>
+        );
+      }
+
+      // Esc to close drawer.
+      document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") {
+          const root = document.querySelector("[data-drawer-open]");
+          if (root) root.click();
+        }
+      });
+
+      const root = ReactDOM.createRoot(document.getElementById("root"));
+      root.render(<App />);
+    </script>
+  </body>
+</html>

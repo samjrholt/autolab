@@ -4,7 +4,7 @@
 
 autolab is a closed-loop, resource-aware framework for autonomous science. A long-running Lab service orchestrates experimental or computational workflows: an agent (Claude Opus 4.7) proposes and reacts, a typed pool of Resources executes, and every step — including the agent's reasoning and every failed or off-target attempt — lands as an append-only hashed Record. Adaptive mid-experiment replanning, live scheduler visualisation, real multiscale physics, and first-class capture of scientific intuition are core.
 
-> **Status — pre-build.** The framework is being scaffolded. The design contract lives in [docs/design/](docs/design/); implementation begins April 2026.
+> **Status — alpha.** Core framework, FastAPI + WebSocket service, live Campaign Console, Claude Opus 4.7 Planner / PolicyProvider / free-text Campaign Designer, per-operation duration learning, and the Ledger-native MLflow-style query DSL are all in place. 114 tests pass. Design contract lives in [docs/design/](docs/design/); task-shaped how-tos in [docs/guides/](docs/guides/).
 
 ## What it is
 
@@ -16,26 +16,71 @@ Three layers to anyone outside the project:
 
 Five layers under the hood: Interface, Orchestration, Expertise, Tools (MCP gateway + capability-named registry, Interpretation Operations included), Provenance.
 
-## Quickstart (planned)
+## Quickstart
 
 ```bash
-# Install the environment via pixi.
-pixi install
-
-# Boot the Lab — FastAPI + WebSocket on :8000.
-pixi run serve
-
-# Register resources / tools / workflows against the running Lab.
-pixi run autolab register resource examples/resources/example-furnace.yaml
-
-# Start a campaign.
-pixi run autolab campaign start examples/campaigns/example-campaign.yaml
-
-# Reproduce a past campaign byte-for-byte.
-pixi run autolab replay <campaign-id>
+pixi install           # set up the Python 3.12 environment
+pixi run serve         # boot uvicorn on :8000 — FastAPI + WebSocket + Console
 ```
 
-(Commands above are the planned CLI surface; several are not yet implemented.)
+Open `http://localhost:8000/` for the live Campaign Console — resource-lane
+Gantt, plan tree, streaming ledger feed with SHA-256 checksums, Claude-driven
+free-text Campaign Designer, and a form to register new Resources. See
+[docs/guides/00-quickstart.md](docs/guides/00-quickstart.md) for the five-minute
+tour.
+
+### HTTP surface (partial)
+
+| Method | Path | Purpose |
+|---|---|---|
+| `GET`  | `/status` | Lab overview: resources, tools, campaigns, record counts, ETAs. |
+| `POST` | `/resources` | Register a Resource (body = JSON). |
+| `POST` | `/tools/register-yaml` | Register a capability from a JSON/YAML declaration. |
+| `POST` | `/workflows` | Register a reusable `WorkflowTemplate`. |
+| `POST` | `/campaigns` | Submit a Campaign (planner picked by name). |
+| `POST` | `/campaigns/design` | Claude turns free text into a draft Campaign + workflow. |
+| `GET`  | `/ledger?filter=…` | Query the Ledger with an MLflow-style DSL. |
+| `GET`  | `/estimate/eta?campaign_id=…` | Projected finish time from the duration model. |
+| `POST` | `/records/{id}/annotate` | Append a hashed note to any Record. |
+| `GET`  | `/verify` | Recompute every Record's SHA-256 and flag mismatches. |
+| `WS`   | `/events` | Live event stream — records, campaigns, resources, escalations. |
+| `POST` | `/workflows/{name}/run` | Execute a registered WorkflowTemplate directly. |
+| `POST` | `/records/{id}/extract` | Run `annotation_extract` — Claude reads notes, returns structured Claim. |
+| `GET`  | `/samples/{id}/history` | Sample lineage + every Record that touched a Sample. |
+| `GET`  | `/export/ro-crate` | RO-Crate 1.1 JSON-LD export (ELN Consortium interop). |
+| `GET`  | `/export/prov` | W3C PROV-O shaped JSON export. |
+
+### CLI
+
+```bash
+pixi run autolab serve                             # boot the service
+pixi run autolab status                            # pretty-print /status
+pixi run autolab verify --root .autolab-runs/...   # rehash every Record
+pixi run autolab replay --root .autolab-runs/... --campaign <id>
+pixi run autolab export --root .autolab-runs/... --fmt ro-crate > campaign.json
+```
+
+`autolab replay` is the credibility anchor — for every Record in a
+campaign it re-canonicalises the payload, recomputes the SHA-256, and
+reports any drift from the stored checksum.
+
+### Bootstraps (`AUTOLAB_BOOTSTRAP`)
+
+| Mode | Registers |
+|---|---|
+| `superellipse` (default) | `superellipse_hysteresis` capability + `pc-1` computer Resource. |
+| `mammos` | All 6 MaMMoS Operations + `mammos_sensor` WorkflowTemplate + `vm-primary` VM Resource. |
+| `all` | Both of the above. |
+| `demo_quadratic` | Trivial stub Operation (no domain viz). |
+| `none` | Empty Lab — register resources/tools via REST. |
+| `module:fn` | Dotted path to a user-supplied `bootstrap(lab)` function. |
+
+### Still planned
+
+- Re-execution-style replay (running cached Operation outputs), not just checksum replay.
+- Vite/Tailwind frontend build pipeline (the Console is a single
+  build-step-free HTML file today).
+- LabIMotion-style Segments (typed metadata blocks attachable to Records).
 
 ## Repo layout
 
