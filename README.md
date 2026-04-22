@@ -38,40 +38,48 @@ pixi run frontend-dev      # run the Vite dev server on :5173
 pixi run frontend-build    # emit the production bundle for FastAPI
 ```
 
-For your WSL2-over-SSH example, boot the server with the SSH bootstrap instead:
+The repo `.env` is reserved for `ANTHROPIC_API_KEY`. Choose lab setup explicitly
+in the command you run.
+
+For example packs, the preferred workflow is:
 
 ```bash
-pixi run serve-wsl-ssh
+pixi run serve-clean
+pixi run apply-bootstrap -- wsl_ssh_demo
 ```
 
-That registers:
+For the WSL2-over-SSH demo there is also a shortcut:
+
+```bash
+pixi run apply-wsl-ssh
+```
+
+That runtime pack registers:
 
 - Resource: `wsl` reached via `ssh wsl2`
 - Capabilities: `add_two`, `cube`
 - Workflow: `add_two_then_cube`
 - Planner: `wsl_ssh_add_cube_optuna`
 
-The Console will then show the WSL resource in the Resources library and the custom planner in the New Campaign form.
-
-If you want the simpler user-like flow instead, start an empty lab and then
-apply the pack to the running service:
+One-shot startup bootstraps still work when you want a single command:
 
 ```bash
-pixi run serve-clean
-pixi run apply-wsl-ssh
+pixi run serve-wsl-ssh
 ```
 
-Or use the generic command:
+Manual verification after applying a pack:
 
-```bash
-pixi run apply-bootstrap -- wsl_ssh_demo
-```
+- `GET /debug/bootstrap` should report `bootstrap_mode: "wsl_ssh_demo"` with `bootstrap_error: null`
+- `GET /status` should show the `wsl` resource, `add_two` and `cube` capabilities, the `add_two_then_cube` workflow, and planner `wsl_ssh_add_cube_optuna`
+- In the Console, check `Library -> Resources`, `Library -> Capabilities`, `Library -> Workflows`, and `Campaigns -> New campaign`
 
 ### HTTP surface (partial)
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET`  | `/status` | Lab overview: resources, tools, campaigns, record counts, ETAs. |
+| `GET`  | `/debug/bootstrap` | Show the active bootstrap mode and any bootstrap error. |
+| `POST` | `/bootstraps/apply` | Apply a named example/bootstrap pack to a running Lab. |
 | `POST` | `/resources` | Register a Resource (body = JSON). |
 | `POST` | `/tools/register-yaml` | Register a capability from a JSON/YAML declaration. |
 | `POST` | `/workflows` | Register a reusable `WorkflowTemplate`. |
@@ -101,6 +109,7 @@ pixi run apply-bootstrap -- wsl_ssh_demo
 
 ```bash
 pixi run autolab serve                             # boot the service
+pixi run autolab apply-bootstrap wsl_ssh_demo     # apply a named pack to a running Lab
 pixi run autolab status                            # pretty-print /status
 pixi run autolab verify --root .autolab-runs/...   # rehash every Record
 pixi run autolab replay --root .autolab-runs/... --campaign <id>

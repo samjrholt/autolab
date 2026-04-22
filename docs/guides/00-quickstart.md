@@ -42,20 +42,25 @@ set `AUTOLAB_BOOTSTRAP=my_package.my_module:my_bootstrap_fn`. Keep bootstrap
 selection explicit in the command you run; the repo `.env` is reserved for
 `ANTHROPIC_API_KEY`.
 
-If the server is already running, you can also apply a bootstrap pack at
-runtime instead of restarting:
+For packs you want to test through the normal UI/REST registration path,
+prefer a clean lab plus a runtime apply instead of a startup bootstrap:
 
-```bash
-curl -X POST http://127.0.0.1:8000/bootstraps/apply \
-  -H "Content-Type: application/json" \
-  -d '{"mode":"wsl_ssh_demo"}'
-```
-
-Or, using the repo tasks:
-
-```bash
+```powershell
 pixi run serve-clean
 pixi run apply-bootstrap -- wsl_ssh_demo
+```
+
+Shortcut for the WSL SSH example:
+
+```powershell
+pixi run apply-wsl-ssh
+```
+
+For a truly blank manual smoke-test ledger, use a dedicated root:
+
+```powershell
+pixi run serve-clean --root .autolab-runs/manual-wsl-smoke
+pixi run apply-wsl-ssh
 ```
 
 ## 3. Open the Console
@@ -75,6 +80,10 @@ The top bar shows breadcrumbs and a WebSocket connection badge. A yellow
 `claude: offline stub` badge means no `ANTHROPIC_API_KEY` is set; the
 designer and Planner policy will return scripted responses.
 
+If you apply a pack while the UI is already open, the Console should refresh
+automatically from websocket events. If you rebuilt the frontend bundle itself,
+hard-refresh the browser once.
+
 ## 4. Run a campaign
 
 From **Campaigns**, click **+ New campaign**. A slide-over opens with a
@@ -88,7 +97,41 @@ of Operations filling resource slots), the **Plan tree** (Campaign →
 Operations), and a **Ledger feed** streaming records with their SHA-256
 checksums as steps complete.
 
-## 5. Verify replayability
+## 5. Manual smoke test
+
+Before applying `wsl_ssh_demo`, make sure the SSH alias works from the same
+machine that will run the Lab:
+
+```powershell
+ssh wsl2 echo ok
+```
+
+Then verify the running Lab after `pixi run apply-wsl-ssh`:
+
+```powershell
+Invoke-RestMethod http://127.0.0.1:8000/debug/bootstrap | ConvertTo-Json -Depth 8
+Invoke-RestMethod http://127.0.0.1:8000/status | ConvertTo-Json -Depth 8
+```
+
+Expected backend state:
+
+- `/debug/bootstrap` reports `bootstrap_mode: "wsl_ssh_demo"` and `bootstrap_error: null`
+- `/status.resources` contains `wsl`
+- `/status.tools` contains `add_two` and `cube`
+- `/status.workflows` contains `add_two_then_cube`
+- `/status.planners_available` contains `wsl_ssh_add_cube_optuna`
+
+Expected UI state:
+
+- `Library -> Resources` shows `wsl`
+- `Library -> Capabilities` shows `add_two` and `cube`
+- `Library -> Workflows` shows `add_two_then_cube`
+- `Campaigns -> New campaign` shows planner `wsl_ssh_add_cube_optuna`
+
+If the backend looks correct but the browser still looks stale, reload the
+page once before debugging further.
+
+## 6. Verify replayability
 
 ```bash
 curl http://localhost:8000/verify
