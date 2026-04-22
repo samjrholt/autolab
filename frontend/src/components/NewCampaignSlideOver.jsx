@@ -8,15 +8,52 @@ import RefinementPrompt from "./shared/RefinementPrompt";
 import { postJson } from "../lib/api";
 import { fadeInUp, stagger } from "../lib/motion";
 
-const PLANNER_OPTIONS = [
-  { value: "heuristic", label: "Heuristic", desc: "Simple rule-based planner — good for fixed workflows" },
-  { value: "bo", label: "Bayesian Optimisation", desc: "GP-EI via Optuna — best for continuous parameter spaces" },
-  { value: "optuna", label: "Optuna", desc: "Tree-structured Parzen estimator — flexible sampler" },
-  { value: "add_demo_optuna", label: "add_demo (Optuna + workflow chain)", desc: "Chains add_two → add_three; optimises x in [0,10]. Used for the add_demo example." },
-  { value: "claude", label: "Claude (LLM)", desc: "Opus 4.7 as planner — adaptive, vision-capable, best for exploratory campaigns" },
-];
+const BUILTIN_PLANNER_OPTIONS = {
+  heuristic: { value: "heuristic", label: "Heuristic", desc: "Simple rule-based planner — good for fixed workflows" },
+  bo: { value: "bo", label: "Bayesian Optimisation", desc: "GP-EI via Optuna — best for continuous parameter spaces" },
+  optuna: { value: "optuna", label: "Optuna", desc: "Tree-structured Parzen estimator — flexible sampler" },
+  add_demo_optuna: {
+    value: "add_demo_optuna",
+    label: "add_demo (Optuna + workflow chain)",
+    desc: "Chains add_two → add_three; optimises x in [0,10]. Used for the add_demo example.",
+  },
+  wsl_ssh_add_cube_optuna: {
+    value: "wsl_ssh_add_cube_optuna",
+    label: "WSL SSH add→cube",
+    desc: "Runs add_two and cube remotely over ssh on WSL2, maximising (x + 2)^3 for x in [0,10].",
+  },
+  claude: { value: "claude", label: "Claude (LLM)", desc: "Opus 4.7 as planner — adaptive, vision-capable, best for exploratory campaigns" },
+};
 
 const OPERATORS = [">=", "<=", ">", "<", "==", "in", "not_in"];
+
+function fallbackPlannerLabel(value) {
+  return value
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((part) => part[0].toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function plannerOptionsFor(planners) {
+  const ordered = [];
+  const seen = new Set();
+  for (const value of planners || []) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    ordered.push(
+      BUILTIN_PLANNER_OPTIONS[value] || {
+        value,
+        label: fallbackPlannerLabel(value),
+        desc: "Custom planner registered on this lab.",
+      },
+    );
+  }
+  if (!seen.has("heuristic")) {
+    ordered.unshift(BUILTIN_PLANNER_OPTIONS.heuristic);
+  }
+  return ordered;
+}
 
 function AcceptanceCriteriaBuilder({ rules, onChange }) {
   const addRule = () => onChange([...rules, { key: "", op: ">=", value: "" }]);
@@ -75,6 +112,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
 
   const workflows = status?.workflows || [];
   const planners = status?.planners_available || ["heuristic"];
+  const plannerOptions = plannerOptionsFor(planners);
   const useClaude = Boolean(status?.claude_configured);
 
   // -- Manual submit --
@@ -186,13 +224,34 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
     setDescription("Maximise x+5 via add_two → add_three chain. x ∈ [0,10], optimal result=15.");
     setObjectiveKey("result");
     setDirection("maximise");
+    setWorkflow("add_two_then_three");
     setPlanner("add_demo_optuna");
     setPlannerConfig({});
     setBudget("24");
+    setParallelism("1");
     setRules([]);
   };
 
-  const hasAddDemo = (status?.tools || []).some((t) => t.capability === "add_two");
+  const fillWslDemo = () => {
+    setName("maximize_wsl_add_then_cube");
+    setDescription("Run add_two then cube on the WSL2 SSH resource and maximise the final result with x constrained to [0,10].");
+    setObjectiveKey("result");
+    setDirection("maximise");
+    setWorkflow("add_two_then_cube");
+    setPlanner("wsl_ssh_add_cube_optuna");
+    setPlannerConfig({});
+    setBudget("24");
+    setParallelism("1");
+    setRules([]);
+  };
+
+  const tools = status?.tools || [];
+  const hasAddDemo = tools.some((t) => t.capability === "add_three")
+    && workflows.some((w) => w.name === "add_two_then_three")
+    && planners.includes("add_demo_optuna");
+  const hasWslDemo = tools.some((t) => t.capability === "cube")
+    && workflows.some((w) => w.name === "add_two_then_cube")
+    && planners.includes("wsl_ssh_add_cube_optuna");
 
   const manualForm = (
     <div>
@@ -203,6 +262,15 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
           className="w-full mb-4 border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] rounded-lg px-3 py-2 text-[12px] hover:bg-[var(--color-accent-glow)] transition-all"
         >
           ⚡ Quick-fill add_demo template
+        </button>
+      ) : null}
+      {hasWslDemo ? (
+        <button
+          type="button"
+          onClick={fillWslDemo}
+          className="w-full mb-4 border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] rounded-lg px-3 py-2 text-[12px] hover:bg-[var(--color-accent-glow)] transition-all"
+        >
+          ⚡ Quick-fill WSL SSH template
         </button>
       ) : null}
       <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Campaign name" className="w-full mb-2 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
@@ -226,7 +294,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
       <div className="mb-2">
         <span className="text-[11px] text-[var(--color-secondary)] uppercase tracking-[0.15em] block mb-1">Planner</span>
         <div className="flex flex-col gap-1">
-          {PLANNER_OPTIONS.filter((p) => planners.includes(p.value) || p.value === "heuristic" || p.value === "claude").map((p) => (
+          {plannerOptions.map((p) => (
             <label key={p.value} className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-all ${planner === p.value ? "border-white/40 bg-white/[0.03]" : "border-transparent hover:bg-white/[0.02]"}`}>
               <input type="radio" name="planner" value={p.value} checked={planner === p.value} onChange={(e) => { setPlanner(e.target.value); setPlannerConfig({}); }} className="accent-white mt-0.5" />
               <div>

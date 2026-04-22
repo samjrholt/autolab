@@ -66,10 +66,11 @@ export default function ResourcesPage({ resources, onAddResource, onSelectResour
                 const live = r.available ?? r.live ?? true;
                 const state = r.state || r.status || (live ? "idle" : "—");
                 const tags = r.tags || r.capabilities || {};
+                const backend = r.backend || r.capabilities?.backend || r.kind || r.type;
                 return (
                   <tr key={name} onClick={() => onSelectResource?.(r)}>
                     <td style={{ color: "var(--color-text)" }}>{name}</td>
-                    <td>{backendBadge(r.backend || r.kind || r.type)}</td>
+                    <td>{backendBadge(backend)}</td>
                     <td>
                       <span style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 12, color: live ? "var(--color-status-green)" : "var(--color-status-red)" }}>
                         <span className={`status-dot ${live ? "status-dot--green" : "status-dot--red"}`} />

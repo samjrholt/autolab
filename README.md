@@ -38,6 +38,35 @@ pixi run frontend-dev      # run the Vite dev server on :5173
 pixi run frontend-build    # emit the production bundle for FastAPI
 ```
 
+For your WSL2-over-SSH example, boot the server with the SSH bootstrap instead:
+
+```bash
+pixi run serve-wsl-ssh
+```
+
+That registers:
+
+- Resource: `wsl` reached via `ssh wsl2`
+- Capabilities: `add_two`, `cube`
+- Workflow: `add_two_then_cube`
+- Planner: `wsl_ssh_add_cube_optuna`
+
+The Console will then show the WSL resource in the Resources library and the custom planner in the New Campaign form.
+
+If you want the simpler user-like flow instead, start an empty lab and then
+apply the pack to the running service:
+
+```bash
+pixi run serve-clean
+pixi run apply-wsl-ssh
+```
+
+Or use the generic command:
+
+```bash
+pixi run apply-bootstrap -- wsl_ssh_demo
+```
+
 ### HTTP surface (partial)
 
 | Method | Path | Purpose |
@@ -91,6 +120,7 @@ reports any drift from the stored checksum.
 | `mammos` | All 6 MaMMoS Operations + `mammos_sensor` WorkflowTemplate + `vm-primary` VM Resource. |
 | `all` | Both `superellipse` and `mammos` bundles. |
 | `shell_command` | `shell_command` capability + `local-worker` Resource. Full round-trip with a local subprocess backend. |
+| `wsl_ssh_demo` | `wsl` SSH resource + `add_two`, `cube`, `add_two_then_cube`, and the `wsl_ssh_add_cube_optuna` planner. |
 | `none` | Empty Lab — register resources/tools via REST. |
 | `module:fn` | Dotted path to a user-supplied `bootstrap(lab)` function. |
 

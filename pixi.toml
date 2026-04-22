@@ -31,8 +31,12 @@ autolab = { path = ".", editable = true, extras = ["dev"] }
 #   pixi run serve --bootstrap wsl_demo
 #   pixi run serve --bootstrap add_demo
 serve     = { cmd = "python -m autolab.server.cli --reload", env = { PYTHONPATH = "." } }
-serve-wsl = { cmd = "python -m autolab.server.cli --bootstrap wsl_demo --reload", env = { PYTHONPATH = "." } }
-serve-add = { cmd = "python -m autolab.server.cli --bootstrap add_demo --reload", env = { PYTHONPATH = "." } }
+serve-clean = { cmd = "python -m autolab.server.cli --reload --bootstrap none", env = { PYTHONPATH = "." } }
+serve-wsl = { cmd = "python -m autolab.server.cli --reload", env = { PYTHONPATH = ".", AUTOLAB_BOOTSTRAP = "wsl_demo" } }
+serve-wsl-ssh = { cmd = "python -m autolab.server.cli --reload", env = { PYTHONPATH = ".", AUTOLAB_BOOTSTRAP = "wsl_ssh_demo" } }
+serve-add = { cmd = "python -m autolab.server.cli --reload", env = { PYTHONPATH = ".", AUTOLAB_BOOTSTRAP = "add_demo" } }
+apply-bootstrap = { cmd = "autolab apply-bootstrap", env = { PYTHONPATH = "." } }
+apply-wsl-ssh = { cmd = "autolab apply-bootstrap wsl_ssh_demo", env = { PYTHONPATH = "." } }
 
 # Boot without reload (production mode).
 serve-prod = { cmd = "python -m autolab.server.cli --host 0.0.0.0", env = { PYTHONPATH = "." } }

@@ -58,7 +58,9 @@ export function useLabState() {
           if (
             message.kind?.startsWith("record.") ||
             message.kind?.startsWith("campaign.") ||
-            message.kind?.startsWith("resource.")
+            message.kind?.startsWith("resource.") ||
+            message.kind?.startsWith("tool.") ||
+            message.kind?.startsWith("workflow.")
           ) {
             refresh();
           }

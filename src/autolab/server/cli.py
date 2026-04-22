@@ -16,6 +16,11 @@ import sys
 
 
 def main() -> None:
+    if "pytest" not in sys.modules:
+        from dotenv import load_dotenv
+
+        load_dotenv()
+
     parser = argparse.ArgumentParser(
         prog="autolab-serve",
         description="Start the autolab Lab server.",
@@ -23,7 +28,10 @@ def main() -> None:
     parser.add_argument(
         "--bootstrap",
         default=os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic"),
-        help="Bootstrap mode: wsl_demo | add_demo | demo_quadratic | none | <module>:<func>",
+        help=(
+            "Bootstrap mode: wsl_demo | wsl_ssh_demo | add_demo | "
+            "demo_quadratic | none | <module>:<func>"
+        ),
     )
     parser.add_argument("--port", type=int, default=8000)
     parser.add_argument("--host", default="127.0.0.1")

@@ -79,7 +79,7 @@ from autolab.agents.claude import (
 )
 from autolab.campaign import Campaign
 from autolab.estimation import EstimationEngine
-from autolab.events import EventBus
+from autolab.events import Event, EventBus
 from autolab.lab import Lab
 from autolab.models import (
     AcceptanceCriteria,
@@ -172,6 +172,10 @@ class LabSetupRequest(BaseModel):
 class LabSetupApplyRequest(BaseModel):
     resources: list[dict[str, Any]] = Field(default_factory=list)
     operations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class BootstrapApplyRequest(BaseModel):
+    mode: str
 
 
 class EntityDesignRequest(BaseModel):
@@ -390,9 +394,19 @@ def _ensure_repo_on_path() -> None:
         sys.path.insert(0, cwd)
 
 
-def _bootstrap(lab: Lab) -> None:
-    _ensure_repo_on_path()
-    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic")
+def _set_bootstrap_diagnostics(lab: Lab, *, mode: str, error: str | None = None) -> None:
+    setattr(
+        lab,
+        "_bootstrap_diagnostics",
+        {
+            "mode": mode,
+            "error": error,
+        },
+    )
+
+
+def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
+    _set_bootstrap_diagnostics(lab, mode=mode)
     log.info("bootstrap mode: %r  (cwd=%s, sys.path[0]=%s)", mode, Path.cwd(), sys.path[0] if sys.path else "(empty)")
     # annotation_extract is always available regardless of mode.
     _register_annotation_extract(lab)
@@ -403,6 +417,7 @@ def _bootstrap(lab: Lab) -> None:
             _bootstrap_superellipse(lab)
             return
         except Exception as exc:  # noqa: BLE001
+            _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             log.warning("superellipse bootstrap failed (%s) — falling back to empty", exc)
             return
     if mode == "mammos":
@@ -410,6 +425,7 @@ def _bootstrap(lab: Lab) -> None:
             _bootstrap_mammos(lab)
             return
         except Exception as exc:  # noqa: BLE001
+            _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             log.warning("mammos bootstrap failed (%s) — falling back to empty", exc)
             return
     if mode == "all":
@@ -431,7 +447,23 @@ def _bootstrap(lab: Lab) -> None:
             from examples.add_demo.bootstrap import bootstrap as _add_demo_boot
             _add_demo_boot(lab)
         except Exception as exc:  # noqa: BLE001
+            _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             log.warning("add_demo bootstrap failed (%s)", exc)
+        return
+    if mode == "wsl_ssh_demo":
+        try:
+            from examples.wsl_ssh_demo.bootstrap import bootstrap as _wsl_ssh_boot
+            _wsl_ssh_boot(lab)
+            log.info(
+                "wsl_ssh_demo bootstrap OK — resources=%s tools=%s workflows=%s",
+                [r.name for r in lab.resources.list()],
+                [d.capability for d in lab.tools.list()],
+                list(lab._workflows.keys()),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
+            import traceback as _tb
+            log.error("wsl_ssh_demo bootstrap FAILED — %s\n%s", exc, _tb.format_exc())
         return
     if mode == "wsl_demo":
         try:
@@ -444,6 +476,7 @@ def _bootstrap(lab: Lab) -> None:
                 list(lab._workflows.keys()),
             )
         except Exception as exc:  # noqa: BLE001
+            _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             import traceback as _tb
             log.error("wsl_demo bootstrap FAILED — %s\n%s", exc, _tb.format_exc())
         return
@@ -452,9 +485,20 @@ def _bootstrap(lab: Lab) -> None:
         mod_name, attr = mode.split(":", 1)
         module = importlib.import_module(mod_name)
         fn = getattr(module, attr)
-        fn(lab)
+        try:
+            fn(lab)
+        except Exception as exc:  # noqa: BLE001
+            _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
+            raise
         return
+    _set_bootstrap_diagnostics(lab, mode=mode, error=f"unknown bootstrap mode {mode!r}")
     log.warning("unknown AUTOLAB_BOOTSTRAP mode %r — booting empty", mode)
+
+
+def _bootstrap(lab: Lab) -> None:
+    _ensure_repo_on_path()
+    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic")
+    _apply_bootstrap_mode(lab, mode)
 
 
 # ---------------------------------------------------------------------------
@@ -1075,6 +1119,44 @@ async def apply_lab_setup(body: LabSetupApplyRequest, request: Request) -> dict[
     }
 
 
+@app.post("/bootstraps/apply")
+async def apply_bootstrap(body: BootstrapApplyRequest, request: Request) -> dict[str, Any]:
+    """Apply a named bootstrap to a running Lab without restarting the server.
+
+    This is intentionally idempotent for the built-in example bundles: each
+    bootstrap is responsible for skipping entities that are already registered.
+    """
+    lab = _lab(request)
+    _ensure_repo_on_path()
+    before_resources = {r.name for r in lab.resources.list()}
+    before_capabilities = {d.capability for d in lab.tools.list()}
+    before_workflows = set(lab._workflows.keys())
+    try:
+        _apply_bootstrap_mode(lab, body.mode)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(400, str(exc)) from exc
+
+    after_resources = {r.name for r in lab.resources.list()}
+    after_capabilities = {d.capability for d in lab.tools.list()}
+    after_workflows = set(lab._workflows.keys())
+
+    for name in sorted(after_resources - before_resources):
+        lab.events.publish(Event(kind="resource.registered", payload={"name": name}))
+    for capability in sorted(after_capabilities - before_capabilities):
+        lab.events.publish(Event(kind="tool.registered", payload={"capability": capability}))
+    for workflow in sorted(after_workflows - before_workflows):
+        lab.events.publish(Event(kind="workflow.registered", payload={"name": workflow}))
+
+    return {
+        "ok": True,
+        "bootstrap_mode": body.mode,
+        "resources": [r.name for r in lab.resources.list()],
+        "capabilities": [d.capability for d in lab.tools.list()],
+        "workflows": list(lab._workflows.keys()),
+        "bootstrap_error": getattr(lab, "_bootstrap_diagnostics", {}).get("error"),
+    }
+
+
 def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
     """Register a dynamically defined Operation from a setup proposal.
 
@@ -1333,8 +1415,10 @@ async def debug_bootstrap(request: Request) -> dict[str, Any]:
     Visit http://localhost:8000/debug/bootstrap if the UI shows empty library.
     """
     lab = _lab(request)
+    diag = getattr(lab, "_bootstrap_diagnostics", {})
     return {
-        "bootstrap_mode": os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic (default)"),
+        "bootstrap_mode": diag.get("mode") or os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic (default)"),
+        "bootstrap_error": diag.get("error"),
         "cwd": str(Path.cwd()),
         "examples_on_path": any("autolab" in p for p in sys.path),
         "resources": [r.name for r in lab.resources.list()],

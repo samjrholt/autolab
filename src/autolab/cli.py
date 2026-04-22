@@ -3,6 +3,7 @@
 Available commands::
 
     autolab serve                               # boot the FastAPI Lab service
+    autolab apply-bootstrap wsl_ssh_demo        # add a named pack to a running Lab
     autolab verify  --root ./.autolab-runs/...  # recompute SHA-256 for every Record
     autolab status                              # query /status on a running Lab
     autolab replay  --root <dir> --campaign <id> # byte-for-byte checksum replay
@@ -34,7 +35,7 @@ def serve(
     root: str = typer.Option(None, help="Ledger root directory (defaults to ./.autolab-runs/default)"),
     bootstrap: str = typer.Option(
         None,
-        help="Bootstrap mode: superellipse | mammos | demo_quadratic | all | none | <module:fn>",
+        help="Bootstrap mode: superellipse | mammos | wsl_ssh_demo | demo_quadratic | all | none | <module:fn>",
     ),
 ) -> None:
     """Boot the FastAPI Lab service."""
@@ -45,6 +46,32 @@ def serve(
     import uvicorn
 
     uvicorn.run("autolab.server.app:app", host=host, port=port, reload=False)
+
+
+@app.command("apply-bootstrap")
+def apply_bootstrap(
+    mode: str = typer.Argument(..., help="Bootstrap mode to apply to the running Lab."),
+    url: str = typer.Option("http://127.0.0.1:8000", help="Base URL of the running Lab service."),
+) -> None:
+    """Apply a named bootstrap pack to a running Lab."""
+    import httpx
+
+    try:
+        response = httpx.post(
+            f"{url}/bootstraps/apply",
+            json={"mode": mode},
+            timeout=15,
+        )
+        response.raise_for_status()
+        data = response.json()
+    except httpx.HTTPStatusError as exc:
+        detail = exc.response.text
+        typer.secho(f"bootstrap apply failed: {detail}", fg="red")
+        raise typer.Exit(1) from exc
+    except httpx.HTTPError as exc:
+        typer.secho(f"cannot reach {url}: {exc}", fg="red")
+        raise typer.Exit(1) from exc
+    typer.echo(json.dumps(data, indent=2, default=str))
 
 
 @app.command()

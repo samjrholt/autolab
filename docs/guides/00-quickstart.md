@@ -38,7 +38,25 @@ the server:
 
 Override the on-disk root by setting `AUTOLAB_ROOT=/path/to/dir`. To skip
 the demo stubs, set `AUTOLAB_BOOTSTRAP=none`. To wire your own bootstrap,
-set `AUTOLAB_BOOTSTRAP=my_package.my_module:my_bootstrap_fn`.
+set `AUTOLAB_BOOTSTRAP=my_package.my_module:my_bootstrap_fn`. Keep bootstrap
+selection explicit in the command you run; the repo `.env` is reserved for
+`ANTHROPIC_API_KEY`.
+
+If the server is already running, you can also apply a bootstrap pack at
+runtime instead of restarting:
+
+```bash
+curl -X POST http://127.0.0.1:8000/bootstraps/apply \
+  -H "Content-Type: application/json" \
+  -d '{"mode":"wsl_ssh_demo"}'
+```
+
+Or, using the repo tasks:
+
+```bash
+pixi run serve-clean
+pixi run apply-bootstrap -- wsl_ssh_demo
+```
 
 ## 3. Open the Console
 
