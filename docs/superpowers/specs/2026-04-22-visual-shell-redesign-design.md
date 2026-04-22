@@ -39,7 +39,6 @@ Library                           ← expandable header group
   · Workflows
   · Resources
   · Tools
-  · Agents                        ← Planner + PolicyProvider configurations
 Ledger                            ← top-level; honors "ledger is the moat"
 
 WORKSPACE
@@ -48,7 +47,8 @@ Settings                          ← API keys, Setup Assistant entry, lab-level
 
 - Library is expandable; its children are peers in the sidebar, not a separate Library landing page.
 - The Lab selector is a dropdown in shape but functionally a display of the current Lab's name + status indicator. Multi-lab is out of scope this week; the dropdown exists so the layout doesn't shift when we add it.
-- The sidebar collapses to an icon-only rail on narrow viewports. Keyboard nav: `g c` → Campaigns, `g l` → Ledger, `g s` → Settings (consistent with Anthropic's conventions).
+- The sidebar collapses to an icon-only rail on narrow viewports. Keyboard nav: `g c` → Campaigns, `g w` → Workflows, `g r` → Resources, `g t` → Tools, `g l` → Ledger, `g s` → Settings (consistent with Anthropic's conventions).
+- **Agents are intentionally not a sidebar entry.** Planner + PolicyProvider selection is surfaced inline in the `+ New Campaign` flow and in the Campaign → Config tab. This keeps the sidebar aligned with scientist-shaped nouns (run, build, record) rather than introducing a framework-internal concept (PolicyProvider) as a first-class page. Re-introduce as a Library entry in v2 once users accumulate reusable agent configurations.
 
 **Top bar (horizontal, above main content):**
 
@@ -60,9 +60,9 @@ Settings                          ← API keys, Setup Assistant entry, lab-level
 
 Dark-only. Backgrounds: `#0f0f0f` canvas, `#141414` panels, `#1a1a1a` cards, `#262626` borders. Accent: `#c96342` (Anthropic terracotta) for primary CTAs, active-tab underlines, and in-progress pills. Status colours: `#7fd67f` running/ok, `#888` neutral/completed, `#d66` failed. Typography: system stack (`-apple-system, system-ui, sans-serif`); 11–14 px in chrome, 16 px titles.
 
-## List Page Pattern (Campaigns, Workflows, Resources, Tools, Agents)
+## List Page Pattern (Campaigns, Workflows, Resources, Tools)
 
-Table-style, scientist-native, sortable. Shared shell across all five list pages:
+Table-style, scientist-native, sortable. Shared shell across all four list pages:
 
 - Page header: page title (left), primary CTA (`+ New campaign` / `+ Register resource` / `+ Import tool` / …) in top-right (terracotta).
 - Search / filter input below the header.
@@ -74,19 +74,18 @@ Table-style, scientist-native, sortable. Shared shell across all five list pages
 **Workflows table columns:** Name · Steps · Last run · Used by · ⋯
 **Resources table columns:** Name · Kind · Capabilities · In use · ⋯
 **Tools table columns:** Capability · Module · Declared · ⋯
-**Agents table columns:** Name · Planner type · Policy provider · Default for · ⋯
 
 ## Campaign Detail View
 
-The hero of the demo. Four tabs inside the detail page, Plan is the default:
+The hero of the demo. Four tabs inside the detail page — **Plan · Ledger · Report · Config** — with Plan as the default:
 
 - **Plan** (default) — the three-zone layout CLAUDE.md locks, plus a right rail. The page is a two-column grid: **left column ≈ two-thirds** width, **right column ≈ one-third**.
   - Left column, row 1 (side-by-side at ≥ 1200 px, stacked below): **Resource lanes (Gantt)** on the left — one lane per registered Resource instance, Operations as pills, time flows left-to-right, live WebSocket updates — and **Plan tree** on the right — Campaign → Experiments → Operations, pill status mirrors the Gantt.
-  - Left column, row 2: **Physics cards** — one card per live-renderable artefact (structure viewer, Ms(T) curve, hysteresis loop, PXRD). Cards appear when the relevant Operation completes and persist thereafter.
-  - Right column, full height: **Reasoning rail** — pinned, always visible at ≥ 1024 px, chronological stream of agent messages, vision claims with confidence, `react()` decisions (Action + reason). This is *not* a tab and *cannot* be dismissed during the Plan view at desktop widths; it collapses to a toggle button below 1024 px. Beat 2 of the demo (vision → Claim Record → `react()` → scheduler reshuffle) plays out as a single readable frame because of this.
+  - Left column, row 2: **Physics cards** — one card per live-renderable artefact (structure viewer, Ms(T) curve, hysteresis loop, PXRD). Operations declare an artefact `kind` in their `OperationResult`; the UI has a renderer registry keyed by `kind`, so adding a new artefact type means registering a renderer, not editing the Plan tab. Cards appear when the relevant Operation completes and persist thereafter.
+  - Right column, full height: **Reasoning rail** — default-open, collapsible at any width via a toggle, chronological stream of agent messages, vision claims with confidence, `react()` decisions (Action + reason). Default-open is what keeps Beat 2 of the demo (vision → Claim Record → `react()` → scheduler reshuffle) readable as a single frame. For heuristic / non-LLM PolicyProviders the rail is sparse (only `react()` Actions with a short `reason` string); it never looks broken, just quieter.
 - **Ledger** — records table filtered to this campaign, same shape as the top-level Ledger page.
 - **Report** — the auto-generated report (renders progressively as the campaign runs; complete and exportable as PDF when the campaign ends).
-- **Settings** — campaign-level config: acceptance criteria editor (dict-of-rules per CLAUDE.md §locked-decisions), budget, planner + policy-provider selection, human-intervention controls, stop button.
+- **Config** — campaign-level configuration: acceptance criteria editor (dict-of-rules per CLAUDE.md §locked-decisions), budget, planner + policy-provider selection, human-intervention controls, stop button. Named "Config" to avoid collision with the lab-level "Settings" in the sidebar.
 
 All four tabs read from the same WebSocket event stream; they are different projections of the same ledger state.
 
@@ -113,7 +112,7 @@ Sections, all in one scrollable page with a left sub-nav:
 | `Sidebar` | Nav tree, lab selector, expandable Library group | router only |
 | `TopBar` | Breadcrumbs, lab status, user menu | lab-status hook, auth hook |
 | `ListPage` | Generic list-page shell: header + search + table slot + empty-state slot | — |
-| `CampaignDetail` | Tabs + routing between Plan/Ledger/Report/Settings | campaign-store hook |
+| `CampaignDetail` | Tabs + routing between Plan/Ledger/Report/Config | campaign-store hook |
 | `PlanTab` | The three-zone + rail hero layout | event-stream hook |
 | `ResourceLanes` | Gantt-lane renderer | event-stream hook |
 | `PlanTree` | Tree renderer | event-stream hook |
@@ -140,9 +139,9 @@ Component-level tests live with components (Vitest). The full-flow Playwright su
 
 ## Rollout / Migration
 
-- Keep the current `App.jsx` reachable at `/legacy` during the hackathon window in case we need a fallback; delete after demo.
+- Delete the old shell (`App.jsx`, `TabNav.jsx`, `Shell.jsx`, `Overview.jsx`, `CampaignTab.jsx`, `Provenance.jsx`) in the same PR that lands the new shell. No `/legacy` fallback — maintaining two frontends in a 6-day build is not worth the safety net. If we need to compare visually, `git checkout day-0 -- frontend/src` restores it on demand.
 - Existing slide-over components (`NewCampaignSlideOver`, `InterventionSlideOver`, `EscalationsSlideOver`) are ported into the new shell as-is; they are triggered from the new CTAs / row actions.
-- The existing `Provenance.jsx` is retired; its job is split between the top-level Ledger page and the Campaign→Ledger tab.
+- `Provenance.jsx`'s responsibilities are split between the top-level Ledger page and the Campaign → Ledger tab, both built on the shared `LedgerTable` component.
 
 ## Open Questions Deferred to Later Subsystems
 
