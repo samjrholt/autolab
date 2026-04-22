@@ -23,7 +23,7 @@ function backendBadge(backend) {
   return <span className="chip chip--accent">{backend || "ssh_exec"}</span>;
 }
 
-export default function ResourcesPage({ resources, onAddResource }) {
+export default function ResourcesPage({ resources, onAddResource, onSelectResource }) {
   const has = resources && resources.length > 0;
 
   return (
@@ -67,7 +67,7 @@ export default function ResourcesPage({ resources, onAddResource }) {
                 const state = r.state || r.status || (live ? "idle" : "—");
                 const tags = r.tags || r.capabilities || {};
                 return (
-                  <tr key={name}>
+                  <tr key={name} onClick={() => onSelectResource?.(r)}>
                     <td style={{ color: "var(--color-text)" }}>{name}</td>
                     <td>{backendBadge(r.backend || r.kind || r.type)}</td>
                     <td>

@@ -6,17 +6,20 @@ import AppShell from "./shell/AppShell";
 import CampaignsPage from "./pages/CampaignsPage";
 import CampaignDetailPage from "./pages/CampaignDetailPage";
 import ResourcesPage from "./pages/ResourcesPage";
+import ResourceDetailPage from "./pages/ResourceDetailPage";
 import CapabilitiesPage from "./pages/CapabilitiesPage";
+import CapabilityDetailPage from "./pages/CapabilityDetailPage";
 import WorkflowsPage from "./pages/WorkflowsPage";
+import WorkflowDetailPage from "./pages/WorkflowDetailPage";
 import LedgerPage from "./pages/LedgerPage";
 import SettingsPage from "./pages/SettingsPage";
 import AssistantPage from "./pages/AssistantPage";
+import DesignerPage from "./pages/DesignerPage";
 
 import RecordDetail from "./components/RecordDetail";
 import NewCampaignSlideOver from "./components/NewCampaignSlideOver";
 import EscalationsSlideOver from "./components/EscalationsSlideOver";
 import InterventionSlideOver from "./components/InterventionSlideOver";
-import SettingsDrawer from "./components/SettingsDrawer";
 
 const CRUMBS = {
   campaigns: ["Campaigns"],
@@ -28,6 +31,12 @@ const CRUMBS = {
   settings: ["Settings"],
 };
 
+const DESIGNER_CRUMBS = {
+  resource: ["Library", "Resources", "New"],
+  workflow: ["Library", "Workflows", "New"],
+  capability: ["Library", "Capabilities", "New"],
+};
+
 export default function App() {
   const { status, records, events, connected, loading, error, refresh } = useLabState();
 
@@ -36,7 +45,6 @@ export default function App() {
   const [showNewCampaign, setShowNewCampaign] = useState(false);
   const [showEscalations, setShowEscalations] = useState(false);
   const [showIntervention, setShowIntervention] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
 
   const campaigns = status?.campaigns || [];
   const resources = status?.resources || [];
@@ -51,11 +59,32 @@ export default function App() {
     [route, campaigns],
   );
 
+  const selectedResource = useMemo(
+    () => (route.page === "resource" ? resources.find((r) => r.name === route.name) : null),
+    [route, resources],
+  );
+
+  const selectedWorkflow = useMemo(
+    () => (route.page === "workflow" ? workflows.find((w) => w.name === route.name) : null),
+    [route, workflows],
+  );
+
+  const selectedCapability = useMemo(
+    () =>
+      route.page === "capability"
+        ? tools.find((t) => (t.capability || t.name) === route.name)
+        : null,
+    [route, tools],
+  );
+
   const crumbs = useMemo(() => {
     if (route.page === "campaign" && selectedCampaign) {
-      const goal = selectedCampaign.objective?.description || selectedCampaign.name || selectedCampaign.campaign_id;
-      return ["Campaigns", goal];
+      return ["Campaigns", selectedCampaign.objective?.description || selectedCampaign.name || selectedCampaign.campaign_id];
     }
+    if (route.page === "resource") return ["Library", "Resources", route.name];
+    if (route.page === "workflow") return ["Library", "Workflows", route.name];
+    if (route.page === "capability") return ["Library", "Capabilities", route.name];
+    if (route.page === "designer") return DESIGNER_CRUMBS[route.kind] || ["Designer"];
     return CRUMBS[route.page] || [route.page];
   }, [route, selectedCampaign]);
 
@@ -86,22 +115,86 @@ export default function App() {
       return (
         <div className="empty-state">
           <h3>Campaign not found</h3>
-          <p>This campaign may have been deleted or never existed.</p>
           <button type="button" className="btn-secondary" onClick={() => navigate({ page: "campaigns" })}>
             ← Back to campaigns
           </button>
         </div>
       );
     }
+
     if (route.page === "resources") {
-      return <ResourcesPage resources={resources} onAddResource={() => setShowSettings(true)} />;
+      return (
+        <ResourcesPage
+          resources={resources}
+          onAddResource={() => navigate({ page: "designer", kind: "resource" })}
+          onSelectResource={(r) => navigate({ page: "resource", name: r.name })}
+        />
+      );
     }
+    if (route.page === "resource") {
+      return (
+        <ResourceDetailPage
+          resource={selectedResource}
+          refresh={refresh}
+          onBack={() => navigate({ page: "resources" })}
+        />
+      );
+    }
+
     if (route.page === "capabilities") {
-      return <CapabilitiesPage tools={tools} onRegister={() => setShowSettings(true)} />;
+      return (
+        <CapabilitiesPage
+          tools={tools}
+          onRegister={() => navigate({ page: "designer", kind: "capability" })}
+          onSelectCapability={(t) =>
+            navigate({ page: "capability", name: t.capability || t.name })
+          }
+        />
+      );
     }
+    if (route.page === "capability") {
+      return (
+        <CapabilityDetailPage
+          tool={selectedCapability}
+          onBack={() => navigate({ page: "capabilities" })}
+        />
+      );
+    }
+
     if (route.page === "workflows") {
-      return <WorkflowsPage workflows={workflows} onCreate={() => setShowSettings(true)} />;
+      return (
+        <WorkflowsPage
+          workflows={workflows}
+          onCreate={() => navigate({ page: "designer", kind: "workflow" })}
+          onSelectWorkflow={(w) => navigate({ page: "workflow", name: w.name })}
+        />
+      );
     }
+    if (route.page === "workflow") {
+      return (
+        <WorkflowDetailPage
+          workflow={selectedWorkflow}
+          onBack={() => navigate({ page: "workflows" })}
+        />
+      );
+    }
+
+    if (route.page === "designer") {
+      const backTarget = {
+        resource: "resources",
+        workflow: "workflows",
+        capability: "capabilities",
+      }[route.kind];
+      return (
+        <DesignerPage
+          kind={route.kind}
+          status={status}
+          refresh={refresh}
+          onDone={() => navigate({ page: backTarget })}
+        />
+      );
+    }
+
     if (route.page === "ledger") {
       return <LedgerPage records={records} onSelectRecord={setSelectedRecord} />;
     }
@@ -176,12 +269,6 @@ export default function App() {
         open={showIntervention}
         onClose={() => setShowIntervention(false)}
         campaigns={campaigns}
-        refresh={refresh}
-      />
-      <SettingsDrawer
-        open={showSettings}
-        onClose={() => setShowSettings(false)}
-        status={status}
         refresh={refresh}
       />
     </>

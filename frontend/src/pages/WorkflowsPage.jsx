@@ -1,7 +1,7 @@
 import PageHeader from "../shell/PageHeader";
 import EmptyState from "../shell/EmptyState";
 
-export default function WorkflowsPage({ workflows, onCreate }) {
+export default function WorkflowsPage({ workflows, onCreate, onSelectWorkflow }) {
   const has = workflows && workflows.length > 0;
 
   return (
@@ -38,7 +38,7 @@ export default function WorkflowsPage({ workflows, onCreate }) {
             </thead>
             <tbody>
               {workflows.map((w) => (
-                <tr key={w.name}>
+                <tr key={w.name} onClick={() => onSelectWorkflow?.(w)}>
                   <td style={{ color: "var(--color-text)" }}>{w.name}</td>
                   <td style={{ color: "var(--color-muted)", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
                     {w.steps?.length ?? w.step_count ?? "—"}

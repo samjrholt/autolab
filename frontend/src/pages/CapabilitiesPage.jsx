@@ -1,7 +1,7 @@
 import PageHeader from "../shell/PageHeader";
 import EmptyState from "../shell/EmptyState";
 
-export default function CapabilitiesPage({ tools, onRegister }) {
+export default function CapabilitiesPage({ tools, onRegister, onSelectCapability }) {
   const has = tools && tools.length > 0;
 
   return (
@@ -42,7 +42,7 @@ export default function CapabilitiesPage({ tools, onRegister }) {
               {tools.map((t) => {
                 const isExample = t.source?.startsWith?.("example:");
                 return (
-                  <tr key={t.name || t.capability}>
+                  <tr key={t.name || t.capability} onClick={() => onSelectCapability?.(t)}>
                     <td style={{ color: "var(--color-text)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
                       {t.capability || t.name}
                       {isExample ? (
