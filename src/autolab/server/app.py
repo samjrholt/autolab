@@ -432,6 +432,13 @@ def _bootstrap(lab: Lab) -> None:
         except Exception as exc:  # noqa: BLE001
             log.warning("add_demo bootstrap failed (%s)", exc)
         return
+    if mode == "wsl_demo":
+        try:
+            from examples.wsl_demo.bootstrap import bootstrap as _wsl_demo_boot
+            _wsl_demo_boot(lab)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("wsl_demo bootstrap failed (%s)", exc)
+        return
     # Custom dotted path module:function
     if ":" in mode:
         mod_name, attr = mode.split(":", 1)
