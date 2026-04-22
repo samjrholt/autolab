@@ -40,6 +40,12 @@ frontend-install = { cmd = "npm install", cwd = "frontend" }
 frontend-dev = { cmd = "npm run dev", cwd = "frontend" }
 frontend-build = { cmd = "npm run build", cwd = "frontend" }
 
+# E2E tests (Playwright). Runs against a real backend + Vite dev server.
+e2e = { cmd = "npx playwright test --headed", cwd = "frontend" }
+e2e-headless = { cmd = "npx playwright test", cwd = "frontend" }
+e2e-ui = { cmd = "npx playwright test --ui", cwd = "frontend" }
+e2e-debug = { cmd = "npx playwright test --debug", cwd = "frontend" }
+
 # Static analysis.
 lint = { cmd = "ruff check src tests && ruff format --check src tests" }
 format = "ruff format src tests"

@@ -87,3 +87,10 @@ desktop.ini
 *.sqlite-shm
 *.db
 *.db-journal
+
+# Brainstorm scratch (visual companion)
+.superpowers/
+
+# Playwright run output
+frontend/test-results/
+frontend/playwright-report/
