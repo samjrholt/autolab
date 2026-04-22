@@ -3,24 +3,36 @@
 Every term here matches [docs/design/GLOSSARY.md](../../docs/design/GLOSSARY.md).
 No domain knowledge of magnetism, catalysis, or any vertical lives in this module.
 
+Design philosophy — Simple, Intuitive, Robust
+---------------------------------------------
+
+The happy path is tiny. An Operation returns
+``OperationResult(status="completed", outputs={...})`` and that is enough.
+A Record is an append-only, hashed row keyed to a Campaign/Experiment/Session.
+Everything else on these models is opt-in: declare a :class:`FailureMode` only
+when you want the orchestrator to distinguish instrument crashes from process
+drift; add ``metadata`` / ``tags`` freely — the models accept extras.
+
 Design invariants
 -----------------
 
-1. **Failure is not binary.** :data:`FailureMode` distinguishes *why* something
+1. **Provenance is the invariant.** Records are append-only, hashed, and never
+   mutated. Corrections are new :class:`Annotation` entries pointing back at
+   what they correct.
+
+2. **Failures are data.** :data:`FailureMode` distinguishes *why* something
    stopped. An instrument crash is not the same as a synthesis that yielded an
    unexpected phase — the former is retried; the latter is a discovery worth
-   exploring. :data:`OutcomeClass` captures what *kind* of result a completed
-   Record represents, separate from whether the acceptance criteria passed.
+   exploring.
 
-2. **Equipment has state.** A furnace is not "free" or "busy" — it may be
+3. **Equipment has state.** A furnace is not "free" or "busy" — it may be
    cooling, calibrating, or in maintenance. :class:`ResourceState` gives the
    scheduler enough information to build a Gantt and estimate wait times.
 
-3. **Workflows are first-class.** :class:`WorkflowTemplate` + :class:`WorkflowStep`
-   describe reusable DAGs of Operations with typed input wiring. They encode
-   the lab's standard operating procedures, not just ad-hoc step lists.
+4. **Workflows are first-class.** :class:`WorkflowTemplate` + :class:`WorkflowStep`
+   describe reusable DAGs of Operations with typed input wiring.
 
-4. **Escalations are records.** A human decision that unblocks a running
+5. **Escalations are records.** A human decision that unblocks a running
    Campaign is an :class:`Escalation` with a hashed :class:`EscalationResolution`
    stored in the ledger — the audit trail covers every intervention.
 """
@@ -236,46 +248,6 @@ FailureMode = Literal[
     consider exploring this branch rather than retrying.
 """
 
-OutcomeClass = Literal[
-    "on_target",  # completed, result matches expectation / gate passed
-    "off_target",  # completed, result differs from target — scientifically interesting
-    "exceptional",  # completed, result significantly exceeds / surprises expectations
-]
-"""What kind of result a *completed* Record represents.
-
-Orthogonal to ``gate_result``: a gate can fail (acceptance criteria not
-met) while the outcome class is ``"off_target"`` rather than a failure.
-This distinction is what lets the Planner decide *explore this unexpected
-result* vs *mark as failure and retry*.
-"""
-
-
-# ---------------------------------------------------------------------------
-# FeatureView — typed, ML-ready view of an Operation's outputs
-# ---------------------------------------------------------------------------
-
-
-FeatureKind = Literal["scalar", "curve", "image", "spectrum", "pointer"]
-
-
-class Feature(BaseModel):
-    """One typed output field on an Operation result."""
-
-    model_config = ConfigDict(extra="allow")
-
-    kind: FeatureKind
-    value: Any
-    unit: str | None = None
-
-
-class FeatureView(BaseModel):
-    """A bundle of typed Features keyed by name."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    fields: dict[str, Feature] = Field(default_factory=dict)
-
-
 # ---------------------------------------------------------------------------
 # OperationResult — what an Operation.run() returns
 # ---------------------------------------------------------------------------
@@ -287,31 +259,27 @@ OperationStatus = Literal["completed", "failed", "soft_fail"]
 class OperationResult(BaseModel):
     """The structured return value of ``Operation.run()``.
 
+    The happy path is two fields::
+
+        OperationResult(status="completed", outputs={"score": 0.9})
+
     The orchestrator wraps Operations and persists this as part of the
     Record — Operations never write Records themselves.
 
     ``failure_mode``
-        If the Operation sets this on a non-``completed`` result, the
-        Orchestrator stamps it onto the Record. This lets the Operation
+        Optional. If the Operation sets this on a non-``completed`` result,
+        the Orchestrator stamps it onto the Record. This lets the Operation
         signal "the instrument failed" (``equipment_failure``) vs "the
         process went wrong" (``process_deviation``).
-
-    ``outcome_class``
-        If the Operation sets this on a ``completed`` result, the
-        Orchestrator stamps it. Useful when an Operation can self-diagnose
-        that it produced an unexpected but valid result.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
     status: OperationStatus = "completed"
     outputs: dict[str, Any] = Field(default_factory=dict)
-    features: FeatureView = Field(default_factory=FeatureView)
     error: str | None = None
     new_sample: Sample | None = None
-    artefacts: dict[str, str] = Field(default_factory=dict)
     failure_mode: FailureMode | None = None
-    outcome_class: OutcomeClass | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -440,19 +408,16 @@ class Record(BaseModel):
 
     # Outcome
     outputs: dict[str, Any] = Field(default_factory=dict)
-    features: FeatureView | None = None
     error: str | None = None
 
     # Failure taxonomy — orthogonal to record_status
     failure_mode: FailureMode | None = None
-    outcome_class: OutcomeClass | None = None
 
     # Decision
     decision: dict[str, Any] = Field(default_factory=dict)
 
     # Quality
     qc: list[dict[str, Any]] = Field(default_factory=list)
-    decision_grade: bool | None = None
     gate_result: GateResult | None = None
 
     # Flex
@@ -626,15 +591,11 @@ __all__ = [
     "EscalationActionType",
     "EscalationResolution",
     "FailureMode",
-    "Feature",
-    "FeatureKind",
-    "FeatureView",
     "GateResult",
     "Intervention",
     "Objective",
     "OperationResult",
     "OperationStatus",
-    "OutcomeClass",
     "ProposedStep",
     "Record",
     "RecordStatus",

@@ -1,8 +1,7 @@
 """Evaluator for the dict-of-rules :class:`~autolab.models.AcceptanceCriteria`.
 
-Inputs come from an Operation's outputs (typically scalar numbers from the
-FeatureView). The evaluator returns a structured :class:`GateVerdict`
-carrying:
+Inputs come from an Operation's ``outputs`` dict (typically scalar numbers).
+The evaluator returns a structured :class:`GateVerdict` carrying:
 
 - an aggregate ``result`` (``pass`` / ``soft_fail`` / ``fail``),
 - a short, human-readable ``reason`` (for the PolicyProvider to read),

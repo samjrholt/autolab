@@ -196,6 +196,51 @@ def _offline_response(system: str, user: str) -> str:
                 "notes": "Anthropic API key not configured; returning a stub.",
             }
         )
+    if "lab setup" in lowered or "lab_setup_designer" in lowered or "scientist description" in lowered:
+        return json.dumps(
+            {
+                "resources": [
+                    {"name": "computer-1", "kind": "computer", "capabilities": {}, "description": "Local workstation"},
+                ],
+                "operations": [],
+                "workflow": None,
+                "notes": "Anthropic API key not configured; returning a minimal stub. Set ANTHROPIC_API_KEY for real setup assistance.",
+            }
+        )
+    if "resource designer" in lowered or "resource_designer" in lowered:
+        return json.dumps(
+            {
+                "name": "resource-1",
+                "kind": "computer",
+                "capabilities": {},
+                "description": "[offline] scripted resource stub",
+                "notes": "Offline fallback — set ANTHROPIC_API_KEY for a real proposal.",
+            }
+        )
+    if "tool designer" in lowered or "tool_designer" in lowered:
+        return json.dumps(
+            {
+                "capability": "example_capability",
+                "resource_kind": "computer",
+                "module": "example.stub.v1",
+                "description": "[offline] scripted tool stub",
+                "inputs": {},
+                "outputs": {"score": "float"},
+                "produces_sample": False,
+                "destructive": False,
+                "typical_duration_s": 5,
+                "notes": "Offline fallback — set ANTHROPIC_API_KEY for a real proposal.",
+            }
+        )
+    if "workflow designer" in lowered or "workflow_designer" in lowered:
+        return json.dumps(
+            {
+                "name": "offline-workflow",
+                "description": "[offline] scripted workflow stub",
+                "steps": [],
+                "notes": "Offline fallback — set ANTHROPIC_API_KEY for a real proposal.",
+            }
+        )
     return "{}"
 
 
@@ -269,7 +314,6 @@ def _describe_decision_context(ctx: DecisionContext) -> str:
         f"Operation: {rec.operation}",
         f"record_status: {rec.record_status}",
         f"failure_mode: {rec.failure_mode}",
-        f"outcome_class: {rec.outcome_class}",
         f"gate.result: {ctx.gate.result}",
         f"gate.reason: {ctx.gate.reason}",
         f"allowed_actions: {[a.value for a in ctx.allowed_actions]}",
@@ -283,7 +327,7 @@ def _describe_decision_context(ctx: DecisionContext) -> str:
     for r in tail:
         lines.append(
             f"  - {r.operation} status={r.record_status} "
-            f"fmode={r.failure_mode} outcome={r.outcome_class}"
+            f"fmode={r.failure_mode}"
         )
     return "\n".join(lines)
 
@@ -461,8 +505,16 @@ class CampaignDesigner:
         self._lab = lab
         self._transport = transport or ClaudeTransport()
 
-    def design(self, text: str) -> DesignResult:
+    def design(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> DesignResult:
         user = _describe_design_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
         resp = self._transport.call(_DESIGNER_SYSTEM, user)
         if self._lab is not None:
             _persist_claim(self._lab, "designer:draft", "campaign_designer", user, resp, loose=True)
@@ -668,6 +720,432 @@ def _persist_claim(
             raise
 
 
+_LAB_SETUP_SYSTEM = """You are the Lab Setup Assistant for an autonomous science lab
+framework called autolab. A scientist is describing their lab equipment and what
+they want to do. Propose the resources and operations they should register.
+
+Reply with a single compact JSON object:
+
+  {
+    "resources": [
+      {
+        "name": "tube-furnace-A",
+        "kind": "furnace",
+        "capabilities": {"max_temp_k": 1400, "atmosphere": ["Ar", "N2"]},
+        "description": "Tube furnace in bay 1"
+      }
+    ],
+    "operations": [
+      {
+        "capability": "sintering",
+        "resource_kind": "furnace",
+        "description": "Sinter a pellet at a target temperature and time",
+        "inputs": {"composition": "dict", "temperature": "float", "time_hours": "float"},
+        "outputs": {"phases": "list", "grain_size_nm": "float", "density": "float"},
+        "produces_sample": true,
+        "destructive": true,
+        "typical_duration_s": 7200
+      }
+    ],
+    "workflow": {
+      "name": "suggested-workflow",
+      "description": "...",
+      "steps": [
+        {"step_id": "s1", "operation": "weighing", "depends_on": []},
+        {"step_id": "s2", "operation": "sintering", "depends_on": ["s1"]}
+      ]
+    },
+    "notes": "Short rationale for the scientist"
+  }
+
+Rules:
+- Use scientist-friendly capability names (weighing, sintering, xrd, magnetometry — not library names).
+- Resource names should be specific instances (tube-furnace-A, squid-1, xrd-1).
+- Resource kinds should be generic categories (furnace, magnetometer, diffractometer, balance, ball_mill, computer).
+- Each operation should map to exactly one real lab step a scientist would recognise.
+- Include a suggested workflow if the steps form a natural sequence.
+- Be practical: only propose what the scientist described. Don't invent equipment they didn't mention.
+- Emit ONLY the JSON; no prose.
+"""
+
+
+@dataclass
+class LabSetupResult:
+    """Output of :meth:`LabSetupDesigner.design`."""
+
+    resources: list[dict[str, Any]]
+    operations: list[dict[str, Any]]
+    workflow: dict[str, Any] | None
+    notes: str
+    raw: ClaudeResponse
+
+
+class LabSetupDesigner:
+    """Free text → proposed resources, operations, and workflow for a lab.
+
+    Same propose → approve → submit pattern as the CampaignDesigner.
+    Nothing is registered here — the scientist reviews the proposal and
+    selects what to apply.
+    """
+
+    def __init__(
+        self,
+        *,
+        lab: Lab | None = None,
+        transport: ClaudeTransport | None = None,
+    ) -> None:
+        self._lab = lab
+        self._transport = transport or ClaudeTransport()
+
+    def design(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> LabSetupResult:
+        user = _describe_setup_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = self._transport.call(_LAB_SETUP_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "setup:draft", "lab_setup_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        return LabSetupResult(
+            resources=list(data.get("resources") or []),
+            operations=list(data.get("operations") or []),
+            workflow=dict(data["workflow"]) if data.get("workflow") else None,
+            notes=str(data.get("notes") or ""),
+            raw=resp,
+        )
+
+
+def _describe_setup_context(text: str, lab: Lab | None) -> str:
+    lines = ["Scientist description (verbatim):", text, ""]
+    if lab is not None:
+        existing_resources = lab.resources.list()
+        existing_tools = lab.tools.list()
+        if existing_resources:
+            lines.append("Already registered resources:")
+            for r in existing_resources:
+                lines.append(f"  - {r.name} kind={r.kind} caps={r.capabilities}")
+        if existing_tools:
+            lines.append("Already registered tools:")
+            for t in existing_tools:
+                lines.append(f"  - {t.capability} (module {t.module}) resource={t.resource_kind}")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Per-entity designers — Resource / Tool / Workflow
+#
+# Each follows the same propose → refine → apply pattern.  Callers pass
+# ``previous`` (the last proposal, possibly edited by the user) and
+# ``instruction`` (a short refinement note like "make it 1600 K") to iterate.
+# Offline fallbacks return minimal stubs keyed off the prompt so tests boot
+# without credentials.
+# ---------------------------------------------------------------------------
+
+
+def _append_refinement(
+    user: str,
+    previous: dict[str, Any] | None,
+    instruction: str | None,
+) -> str:
+    """Tack a "previous proposal + instruction" block onto a designer prompt."""
+    parts = [user, ""]
+    if previous:
+        parts.append("Previous proposal (with any edits the user made):")
+        try:
+            parts.append(json.dumps(previous, indent=2, default=str)[:4000])
+        except (TypeError, ValueError):
+            parts.append(str(previous)[:4000])
+    if instruction:
+        parts.append("")
+        parts.append("Refinement instruction (verbatim):")
+        parts.append(instruction)
+        parts.append("")
+        parts.append(
+            "Produce a revised proposal that preserves the user's edits where "
+            "reasonable and addresses the refinement instruction."
+        )
+    return "\n".join(parts)
+
+
+_RESOURCE_SYSTEM = """You are the Resource Designer for an autonomous science lab
+framework called autolab. A scientist is describing ONE piece of lab equipment or
+compute they want to register as a Resource. Propose a single resource.
+
+Reply with a single compact JSON object:
+
+  {
+    "name": "tube-furnace-A",
+    "kind": "furnace",
+    "capabilities": {"max_temp_k": 1400, "atmosphere": "Ar"},
+    "description": "Tube furnace in bay 1",
+    "notes": "Short rationale"
+  }
+
+Rules:
+- name = a specific instance name (tube-furnace-A, slurm-gpu-partition, squid-1).
+- kind = generic category (furnace, tube_furnace, arc_furnace, magnetometer,
+  xrd, balance, slurm_partition, computer, vm, gpu_node, custom).
+- capabilities = structured dict of numeric/string fields relevant to the kind.
+- Emit ONLY the JSON; no prose.
+"""
+
+
+@dataclass
+class ResourceProposal:
+    """Output of :meth:`ResourceDesigner.design`."""
+
+    resource: dict[str, Any]
+    notes: str
+    raw: ClaudeResponse
+
+
+class ResourceDesigner:
+    """Free text → proposed Resource (one at a time), with iterative refinement."""
+
+    def __init__(
+        self,
+        *,
+        lab: Lab | None = None,
+        transport: ClaudeTransport | None = None,
+    ) -> None:
+        self._lab = lab
+        self._transport = transport or ClaudeTransport()
+
+    def design(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> ResourceProposal:
+        user = _describe_resource_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = self._transport.call(_RESOURCE_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "designer:resource", "resource_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        # The top-level object may or may not contain a "notes" key; strip it
+        # when we hand the body back to the caller so the "resource" dict is
+        # directly postable to /resources.
+        notes = str(data.pop("notes", "") or "")
+        return ResourceProposal(resource=dict(data), notes=notes, raw=resp)
+
+
+def _describe_resource_context(text: str, lab: Lab | None) -> str:
+    lines = [
+        "You are the Resource Designer.",
+        "",
+        "Scientist description (verbatim):",
+        text,
+        "",
+    ]
+    if lab is not None:
+        existing = lab.resources.list()
+        if existing:
+            lines.append("Already registered resources (avoid duplicating names):")
+            for r in existing:
+                lines.append(f"  - {r.name} kind={r.kind} caps={r.capabilities}")
+    return "\n".join(lines)
+
+
+_TOOL_SYSTEM = """You are the Tool Designer for an autonomous science lab framework
+called autolab. A scientist is describing ONE capability (tool) they want to
+register. Propose a single YAML-equivalent JSON declaration.
+
+Reply with a single compact JSON object:
+
+  {
+    "capability": "sintering",
+    "resource_kind": "furnace",
+    "module": "sintering.stub.v1",
+    "description": "Sinter a pellet at a target temperature and time",
+    "inputs":  {"composition": "dict", "temperature_k": "float", "time_h": "float"},
+    "outputs": {"phases": "list", "grain_size_nm": "float", "density": "float"},
+    "resource_requirements": {"max_temp_k": {">=": 1400}},
+    "produces_sample": true,
+    "destructive": true,
+    "typical_duration_s": 7200,
+    "notes": "Short rationale"
+  }
+
+Rules:
+- capability = scientist-friendly verb (sintering, magnetometry, xrd, hysteresis_interpret).
+- resource_kind = the generic resource category this tool binds to.
+- inputs/outputs = map of name -> coarse type string (float, int, bool, list, dict, str).
+- Emit ONLY the JSON; no prose.
+"""
+
+
+@dataclass
+class ToolProposal:
+    """Output of :meth:`ToolDesigner.design`."""
+
+    tool: dict[str, Any]
+    notes: str
+    raw: ClaudeResponse
+
+
+class ToolDesigner:
+    """Free text → proposed Tool YAML dict, with iterative refinement."""
+
+    def __init__(
+        self,
+        *,
+        lab: Lab | None = None,
+        transport: ClaudeTransport | None = None,
+    ) -> None:
+        self._lab = lab
+        self._transport = transport or ClaudeTransport()
+
+    def design(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> ToolProposal:
+        user = _describe_tool_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = self._transport.call(_TOOL_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "designer:tool", "tool_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        notes = str(data.pop("notes", "") or "")
+        return ToolProposal(tool=dict(data), notes=notes, raw=resp)
+
+
+def _describe_tool_context(text: str, lab: Lab | None) -> str:
+    lines = [
+        "You are the Tool Designer.",
+        "",
+        "Scientist description (verbatim):",
+        text,
+        "",
+    ]
+    if lab is not None:
+        resources = lab.resources.list()
+        tools = lab.tools.list()
+        if resources:
+            lines.append("Available resource kinds (pick one):")
+            kinds = sorted({r.kind for r in resources})
+            for k in kinds:
+                lines.append(f"  - {k}")
+        if tools:
+            lines.append("Already registered tools (avoid duplicating capability names):")
+            for t in tools:
+                lines.append(f"  - {t.capability} resource={t.resource_kind}")
+    return "\n".join(lines)
+
+
+_WORKFLOW_SYSTEM = """You are the Workflow Designer for an autonomous science lab
+framework called autolab. A scientist is describing ONE workflow (a sequence or
+small DAG of Operations) they want to register. Propose a single WorkflowTemplate.
+
+Reply with a single compact JSON object:
+
+  {
+    "name": "synthesise-and-measure",
+    "description": "Sinter a pellet then characterise it.",
+    "steps": [
+      {
+        "step_id": "s1",
+        "operation": "sintering",
+        "depends_on": [],
+        "inputs": {"temperature_k": 1600, "time_h": 4, "atmosphere": "O2"},
+        "produces_sample": true,
+        "destructive": true
+      },
+      {
+        "step_id": "s2",
+        "operation": "xrd",
+        "depends_on": ["s1"],
+        "inputs": {}
+      }
+    ],
+    "acceptance": {"rules": {"phase_purity": {">=": 0.9}}},
+    "notes": "Short rationale"
+  }
+
+Rules:
+- Use ONLY operations that appear in the `tools` list of the context block.
+- Each step_id MUST be unique within the workflow.
+- `depends_on` references earlier step_ids; empty = start of the DAG.
+- Emit ONLY the JSON; no prose.
+"""
+
+
+@dataclass
+class WorkflowProposal:
+    """Output of :meth:`WorkflowDesigner.design`."""
+
+    workflow: dict[str, Any]
+    notes: str
+    raw: ClaudeResponse
+
+
+class WorkflowDesigner:
+    """Free text → proposed WorkflowTemplate, with iterative refinement."""
+
+    def __init__(
+        self,
+        *,
+        lab: Lab | None = None,
+        transport: ClaudeTransport | None = None,
+    ) -> None:
+        self._lab = lab
+        self._transport = transport or ClaudeTransport()
+
+    def design(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> WorkflowProposal:
+        user = _describe_workflow_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = self._transport.call(_WORKFLOW_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "designer:workflow", "workflow_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        notes = str(data.pop("notes", "") or "")
+        return WorkflowProposal(workflow=dict(data), notes=notes, raw=resp)
+
+
+def _describe_workflow_context(text: str, lab: Lab | None) -> str:
+    lines = [
+        "You are the Workflow Designer.",
+        "",
+        "Scientist description (verbatim):",
+        text,
+        "",
+    ]
+    if lab is not None:
+        tools = lab.tools.list()
+        resources = lab.resources.list()
+        if tools:
+            lines.append("Registered tools (available operations):")
+            for t in tools:
+                lines.append(
+                    f"  - {t.capability} (resource={t.resource_kind}) "
+                    f"inputs={list(t.inputs.keys()) if t.inputs else []} "
+                    f"outputs={list(t.outputs.keys()) if t.outputs else []}"
+                )
+        if resources:
+            lines.append("Registered resources:")
+            for r in resources:
+                lines.append(f"  - {r.name} kind={r.kind}")
+    return "\n".join(lines)
+
+
 __all__ = [
     "CLAUDE_MODEL_DEFAULT",
     "CampaignDesigner",
@@ -676,6 +1154,14 @@ __all__ = [
     "ClaudeResponse",
     "ClaudeTransport",
     "DesignResult",
+    "LabSetupDesigner",
+    "LabSetupResult",
+    "ResourceDesigner",
+    "ResourceProposal",
+    "ToolDesigner",
+    "ToolProposal",
+    "WorkflowDesigner",
+    "WorkflowProposal",
     "campaign_from_draft",
     "objective_from",
     "workflow_template_from_draft",

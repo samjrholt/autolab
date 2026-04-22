@@ -33,10 +33,10 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from autolab.models import Feature, FeatureView, OperationResult, Sample
+from autolab.models import OperationResult, Sample
 from autolab.operations.base import Operation, OperationContext
 
-from examples.mammos_sensor.operations.material import _executor_from_ctx, _scalar_features
+from examples.mammos_sensor.operations.material import _executor_from_ctx
 from examples.mammos_sensor.vm import ScriptError, VMError
 
 
@@ -124,11 +124,6 @@ class SensorMesh(Operation):
         return OperationResult(
             status="completed",
             outputs=outputs,
-            features=_scalar_features(
-                area_nm2=result["area_nm2"],
-                volume_nm3=result["volume_nm3"],
-                aspect_ratio=result["aspect_ratio"],
-            ),
             new_sample=sample,
         )
 
@@ -209,20 +204,7 @@ class MicromagneticHysteresis(Operation):
             backend = "surrogate"
 
         outputs = {"backend": backend, **result}
-        return OperationResult(
-            status="completed",
-            outputs=outputs,
-            features=FeatureView(
-                fields={
-                    "Hc_A_per_m": Feature(kind="scalar", value=result["Hc_A_per_m"]),
-                    "Mr_A_per_m": Feature(kind="scalar", value=result["Mr_A_per_m"]),
-                    "loop": Feature(
-                        kind="curve",
-                        value={"H_A_per_m": result["H_A_per_m"], "M_A_per_m": result["M_A_per_m"]},
-                    ),
-                }
-            ),
-        )
+        return OperationResult(status="completed", outputs=outputs)
 
 
 # ---------------------------------------------------------------------------
@@ -277,9 +259,6 @@ class SensorFigureOfMerit(Operation):
         return OperationResult(
             status="completed",
             outputs={"backend": "analytic", **fom},
-            features=_scalar_features(
-                **{k: v for k, v in fom.items() if isinstance(v, (int, float))}
-            ),
         )
 
 

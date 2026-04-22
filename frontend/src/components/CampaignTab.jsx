@@ -157,6 +157,20 @@ export default function CampaignTab({
             </>
           )}
           <LifecycleButton label="Intervene" onClick={onOpenIntervention} />
+          <a
+            href={`/export/ro-crate?campaign_id=${activeCampaignId}`}
+            download
+            className="bg-transparent border border-[var(--color-line)] hover:border-[var(--color-line-hover)] rounded-lg px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--color-secondary)] hover:text-white transition-all no-underline"
+          >
+            RO-Crate
+          </a>
+          <a
+            href={`/export/prov?campaign_id=${activeCampaignId}`}
+            download
+            className="bg-transparent border border-[var(--color-line)] hover:border-[var(--color-line-hover)] rounded-lg px-3 py-1.5 text-[11px] font-medium uppercase tracking-[0.1em] text-[var(--color-secondary)] hover:text-white transition-all no-underline"
+          >
+            PROV
+          </a>
         </motion.div>
       </motion.div>
 

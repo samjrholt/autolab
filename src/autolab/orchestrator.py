@@ -10,8 +10,8 @@ For each Operation:
 5. On exception → ``failed`` Record with ``failure_mode="equipment_failure"``.
    On ``OperationResult.status="failed"`` → ``failed`` Record with
    ``failure_mode`` taken from the result (or ``"process_deviation"`` if
-   not set by the Operation). On success → finalise with outputs, features,
-   gate verdict, and ``outcome_class``.
+   not set by the Operation). On success → finalise with outputs and
+   gate verdict.
 6. Publish events around each transition.
 
 Failure taxonomy
@@ -34,13 +34,9 @@ The Orchestrator stamps three distinct failure modes:
     The measurement ran; the data is unreliable. The sample is intact.
 
 ``synthesis_deviation``
-    The Operation self-reported this, or the gate failed on a *completed*
-    result. The process ran; the product differed from the intended target.
-    This is a *discovery*, not a failure — the Planner should explore it.
-
-``outcome_class``
-    On *completed* Records: ``on_target`` (gate passed), ``off_target``
-    (gate failed), or ``exceptional`` (Operation self-reported).
+    The Operation self-reported this. The process ran; the product differed
+    from the intended target. This is a *discovery*, not a failure — the
+    Planner can explore it rather than retry.
 
 These fields are orthogonal to ``record_status`` and give the Planner
 the information it needs to decide *retry* vs *explore* vs *escalate*.
@@ -61,7 +57,6 @@ from autolab.models import (
     AcceptanceCriteria,
     FailureMode,
     OperationResult,
-    OutcomeClass,
     ProposedStep,
     Record,
     Resource,
@@ -269,15 +264,6 @@ class Orchestrator:
 
         gate = evaluate(acceptance, result.outputs)
 
-        # Determine outcome_class: prefer what the Operation told us, else derive from gate.
-        oclass: OutcomeClass
-        if result.outcome_class is not None:
-            oclass = result.outcome_class
-        elif gate.result == "pass":
-            oclass = "on_target"
-        else:
-            oclass = "off_target"
-
         sample = result.new_sample
         if sample is None and decl.produces_sample:
             sample = Sample(
@@ -289,14 +275,11 @@ class Orchestrator:
             update={
                 "record_status": result.status,
                 "outputs": dict(result.outputs),
-                "features": result.features,
                 "error": result.error,
                 "duration_ms": duration_ms,
                 "sample_id": sample.id if sample else running.sample_id,
                 "parent_sample_ids": [s.id for s in upstream_samples],
                 "gate_result": gate.result,
-                "decision_grade": gate.result == "pass",
-                "outcome_class": oclass,
                 "failure_mode": None,
                 "finalised_at": datetime.now(UTC),
             }
@@ -316,7 +299,6 @@ class Orchestrator:
                 payload={
                     "record": finalised.model_dump(mode="json"),
                     "gate": {"result": gate.result, "reason": gate.reason},
-                    "outcome_class": oclass,
                 },
             )
         )

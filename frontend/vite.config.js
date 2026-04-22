@@ -16,6 +16,11 @@ const apiPrefixes = [
   "/estimate",
   "/samples",
   "/verify",
+  "/lab",
+  "/export",
+  "/acceptance",
+  "/health",
+  "/escalations",
 ];
 
 

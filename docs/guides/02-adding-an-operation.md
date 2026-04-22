@@ -16,8 +16,8 @@ Subclass `Operation`, declare a few class attributes, implement
 from pydantic import BaseModel, Field
 
 from autolab import Lab
-from autolab.models import OperationResult, FeatureView, Feature
-from autolab.operations.base import Operation, OperationContext
+from autolab.models import OperationResult
+from autolab.operations.base import Operation
 
 
 class TubeFurnaceSinter(Operation):
@@ -38,14 +38,11 @@ class TubeFurnaceSinter(Operation):
         grain_size_nm: float
         densification: float
 
-    async def run(self, inputs: dict, ctx: OperationContext) -> OperationResult:
+    async def run(self, inputs: dict) -> OperationResult:
         # Run the instrument. Return a structured result.
         grain = await _hardware_sinter(**inputs)
         return OperationResult(
             outputs={"grain_size_nm": grain, "densification": 0.98},
-            features=FeatureView(fields={
-                "grain_size_nm": Feature(kind="scalar", value=grain, unit="nm"),
-            }),
         )
 
 
@@ -77,7 +74,7 @@ lab.register_operation(TubeFurnaceSinter)
 ### Self-declared failure modes
 
 If your Operation ran but the result is unreliable (bad measurement, off-
-target synthesis), set `failure_mode` and `outcome_class` on the result:
+target synthesis), set `failure_mode` on the result:
 
 ```python
 return OperationResult(

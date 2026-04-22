@@ -49,7 +49,7 @@ dependencies = [
     "orjson>=3.10",
     # Logging
     "structlog>=24.1",
-    # Numerics (BO planner, FeatureView arrays)
+    # Numerics (BO planner, array outputs)
     "numpy>=1.26",
     # Optimisers
     "optuna>=4.0",

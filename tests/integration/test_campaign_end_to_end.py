@@ -14,11 +14,8 @@ import pytest
 from autolab import (
     AcceptanceCriteria,
     Campaign,
-    Feature,
-    FeatureView,
     Lab,
     Objective,
-    OperationContext,
     OperationResult,
     Resource,
 )
@@ -35,15 +32,13 @@ class _QuadraticOp(Operation):
     produces_sample = True
     module = "quadratic.v1"
 
-    async def run(self, inputs: dict[str, Any], context: OperationContext) -> OperationResult:
+    async def run(self, inputs: dict[str, Any]) -> OperationResult:
         x = float(inputs["x"])
         y = float(inputs["y"])
         score = 1.0 - (x - 0.4) ** 2 - (y - 0.6) ** 2
-        outputs = {"x": x, "y": y, "score": score}
         return OperationResult(
             status="completed",
-            outputs=outputs,
-            features=FeatureView(fields={"score": Feature(kind="scalar", value=score)}),
+            outputs={"x": x, "y": y, "score": score},
         )
 
 

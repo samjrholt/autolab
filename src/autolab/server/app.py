@@ -51,6 +51,7 @@ import importlib
 import json
 import logging
 import os
+import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -67,6 +68,10 @@ from autolab.agents.claude import (
     ClaudePlanner,
     ClaudePolicyProvider,
     ClaudeTransport,
+    LabSetupDesigner,
+    ResourceDesigner,
+    ToolDesigner,
+    WorkflowDesigner,
     drain_pending_claims,
 )
 from autolab.campaign import Campaign
@@ -151,6 +156,27 @@ class InterventionRequest(BaseModel):
 
 class DesignRequest(BaseModel):
     text: str
+    previous: dict[str, Any] | None = None
+    instruction: str | None = None
+
+
+class LabSetupRequest(BaseModel):
+    text: str
+    previous: dict[str, Any] | None = None
+    instruction: str | None = None
+
+
+class LabSetupApplyRequest(BaseModel):
+    resources: list[dict[str, Any]] = Field(default_factory=list)
+    operations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class EntityDesignRequest(BaseModel):
+    """Iterative-refinement request for per-entity designers (resource / tool / workflow)."""
+
+    text: str = ""
+    previous: dict[str, Any] | None = None
+    instruction: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -258,9 +284,9 @@ def _bootstrap_demo_quadratic(lab: Lab) -> None:
     """
     from pydantic import BaseModel as _BM
 
-    from autolab.models import Feature, FeatureView, OperationResult
+    from autolab.models import OperationResult
     from autolab.models import Resource as _Resource
-    from autolab.operations.base import Operation, OperationContext
+    from autolab.operations.base import Operation
 
     class DemoQuadratic(Operation):
         capability = "demo_quadratic"
@@ -275,9 +301,7 @@ def _bootstrap_demo_quadratic(lab: Lab) -> None:
         class Outputs(_BM):
             score: float
 
-        async def run(
-            self, inputs: dict[str, Any], context: OperationContext
-        ) -> OperationResult:
+        async def run(self, inputs: dict[str, Any]) -> OperationResult:
             import random
 
             await asyncio.sleep(0.4 + random.random() * 0.6)
@@ -287,7 +311,6 @@ def _bootstrap_demo_quadratic(lab: Lab) -> None:
             return OperationResult(
                 status="completed",
                 outputs={"score": score, "x": x},
-                features=FeatureView(fields={"score": Feature(kind="scalar", value=score)}),
             )
 
     if not lab.resources.list():
@@ -326,7 +349,7 @@ def _register_annotation_extract(lab: Lab) -> None:
 
 
 def _bootstrap(lab: Lab) -> None:
-    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "superellipse")
+    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic")
     # annotation_extract is always available regardless of mode.
     _register_annotation_extract(lab)
     if mode in ("none", ""):
@@ -395,9 +418,11 @@ async def _event_bridge(events: EventBus, ws_manager: ConnectionManager) -> None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    from dotenv import load_dotenv
+    # Load .env unless running under pytest (tests expect a clean environment).
+    if "pytest" not in sys.modules:
+        from dotenv import load_dotenv
 
-    load_dotenv()  # loads .env from cwd if present
+        load_dotenv()  # loads .env from cwd if present
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(name)-24s  %(message)s",
@@ -587,6 +612,29 @@ async def register_yaml_tool(body: dict[str, Any], request: Request) -> dict[str
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from exc
     return _tool_row(decl)
+
+
+@app.post("/tools/register")
+async def register_simple_tool(body: dict[str, Any], request: Request) -> dict[str, Any]:
+    """Register a Tool from a simple JSON description (no adapter path required).
+
+    Creates a dynamic stub Operation class whose outputs match the declared
+    schema.  Meant for the console's Tool builder; scientists can later
+    replace the stub with a real adapter by registering a YAML declaration
+    at the same capability name after unregistering.
+    """
+    lab = _lab(request)
+    if "capability" not in body:
+        raise HTTPException(400, "capability is required")
+    if lab.tools.has(body["capability"]):
+        raise HTTPException(
+            400, f"tool {body['capability']!r} already registered"
+        )
+    try:
+        _register_dynamic_operation(lab, body)
+    except Exception as exc:  # noqa: BLE001 — surface a clean error
+        raise HTTPException(400, f"failed to register tool: {exc}") from exc
+    return {"ok": True, "capability": body["capability"]}
 
 
 # ---------------------------------------------------------------------------
@@ -817,7 +865,11 @@ async def intervene(
 async def design_campaign(body: DesignRequest, request: Request) -> dict[str, Any]:
     lab = _lab(request)
     designer = CampaignDesigner(lab=lab, transport=ClaudeTransport())
-    result = designer.design(body.text)
+    result = designer.design(
+        body.text,
+        previous=body.previous,
+        instruction=body.instruction,
+    )
     return {
         "campaign": result.campaign_json,
         "workflow": result.workflow_json,
@@ -826,6 +878,181 @@ async def design_campaign(body: DesignRequest, request: Request) -> dict[str, An
         "offline": result.raw.offline,
         "prompt_sha256": result.raw.prompt_hash,
     }
+
+
+# ---------------------------------------------------------------------------
+# Lab setup — LLM-assisted onboarding
+# ---------------------------------------------------------------------------
+
+
+@app.post("/lab/setup")
+async def design_lab_setup(body: LabSetupRequest, request: Request) -> dict[str, Any]:
+    """Describe your lab in plain language → Claude proposes resources and operations."""
+    lab = _lab(request)
+    designer = LabSetupDesigner(lab=lab, transport=ClaudeTransport())
+    result = designer.design(
+        body.text,
+        previous=body.previous,
+        instruction=body.instruction,
+    )
+    return {
+        "resources": result.resources,
+        "operations": result.operations,
+        "workflow": result.workflow,
+        "notes": result.notes,
+        "model": result.raw.model,
+        "offline": result.raw.offline,
+    }
+
+
+@app.post("/resources/design")
+async def design_resource(body: EntityDesignRequest, request: Request) -> dict[str, Any]:
+    """Propose (or refine) a single Resource from a natural-language description."""
+    lab = _lab(request)
+    designer = ResourceDesigner(lab=lab, transport=ClaudeTransport())
+    result = designer.design(
+        body.text,
+        previous=body.previous,
+        instruction=body.instruction,
+    )
+    return {
+        "resource": result.resource,
+        "notes": result.notes,
+        "model": result.raw.model,
+        "offline": result.raw.offline,
+    }
+
+
+@app.post("/tools/design")
+async def design_tool(body: EntityDesignRequest, request: Request) -> dict[str, Any]:
+    """Propose (or refine) a single Tool declaration from a natural-language description."""
+    lab = _lab(request)
+    designer = ToolDesigner(lab=lab, transport=ClaudeTransport())
+    result = designer.design(
+        body.text,
+        previous=body.previous,
+        instruction=body.instruction,
+    )
+    return {
+        "tool": result.tool,
+        "notes": result.notes,
+        "model": result.raw.model,
+        "offline": result.raw.offline,
+    }
+
+
+@app.post("/workflows/design")
+async def design_workflow(body: EntityDesignRequest, request: Request) -> dict[str, Any]:
+    """Propose (or refine) a single WorkflowTemplate from a natural-language description."""
+    lab = _lab(request)
+    designer = WorkflowDesigner(lab=lab, transport=ClaudeTransport())
+    result = designer.design(
+        body.text,
+        previous=body.previous,
+        instruction=body.instruction,
+    )
+    return {
+        "workflow": result.workflow,
+        "notes": result.notes,
+        "model": result.raw.model,
+        "offline": result.raw.offline,
+    }
+
+
+@app.post("/lab/setup/apply")
+async def apply_lab_setup(body: LabSetupApplyRequest, request: Request) -> dict[str, Any]:
+    """Apply a reviewed lab setup proposal — register resources and operations."""
+    lab = _lab(request)
+    registered_resources = []
+    registered_operations = []
+    errors = []
+
+    for r in body.resources:
+        try:
+            resource = Resource(
+                name=r["name"],
+                kind=r["kind"],
+                capabilities=r.get("capabilities", {}),
+                description=r.get("description", ""),
+                typical_operation_durations=r.get("typical_operation_durations", {}),
+            )
+            lab.register_resource(resource)
+            registered_resources.append(r["name"])
+            from autolab.events import Event
+            lab.events.publish(Event(kind="resource.registered", payload={"name": resource.name}))
+        except Exception as exc:
+            errors.append(f"resource {r.get('name', '?')}: {exc}")
+
+    for op in body.operations:
+        try:
+            _register_dynamic_operation(lab, op)
+            registered_operations.append(op["capability"])
+        except Exception as exc:
+            errors.append(f"operation {op.get('capability', '?')}: {exc}")
+
+    return {
+        "ok": len(errors) == 0,
+        "registered_resources": registered_resources,
+        "registered_operations": registered_operations,
+        "errors": errors,
+    }
+
+
+def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
+    """Register a dynamically defined Operation from a setup proposal.
+
+    Creates a simple Operation subclass that returns mock outputs matching
+    the declared schema. The scientist can later replace this with a real
+    adapter that talks to their actual equipment.
+    """
+    capability = spec["capability"]
+    resource_kind = spec.get("resource_kind")
+    module = spec.get("module", f"{capability}.stub.v1")
+    produces_sample = spec.get("produces_sample", False)
+    destructive = spec.get("destructive", False)
+    duration = spec.get("typical_duration_s", 5)
+    output_schema = spec.get("outputs", {})
+
+    # Build a simple Operation class dynamically
+    from autolab.operations.base import Operation, OperationContext
+
+    class DynamicOp(Operation):
+        pass
+
+    DynamicOp.capability = capability
+    DynamicOp.resource_kind = resource_kind
+    DynamicOp.module = module
+    DynamicOp.produces_sample = produces_sample
+    DynamicOp.destructive = destructive
+    DynamicOp.typical_duration = duration
+
+    async def _run(self: Any, inputs: dict[str, Any], context: OperationContext) -> OperationResult:
+        import random
+        await asyncio.sleep(0.3 + random.random() * 0.4)
+        # Generate stub outputs matching the declared schema
+        outputs: dict[str, Any] = {}
+        for key, typ in output_schema.items():
+            typ_str = str(typ).lower()
+            if "float" in typ_str or "number" in typ_str:
+                outputs[key] = round(random.uniform(0.1, 100.0), 3)
+            elif "int" in typ_str:
+                outputs[key] = random.randint(1, 100)
+            elif "bool" in typ_str:
+                outputs[key] = random.choice([True, False])
+            elif "list" in typ_str or "array" in typ_str:
+                outputs[key] = []
+            elif "dict" in typ_str or "object" in typ_str:
+                outputs[key] = {}
+            else:
+                outputs[key] = f"stub-{key}"
+        return OperationResult(status="completed", outputs=outputs)
+
+    DynamicOp.run = _run
+    DynamicOp.__name__ = f"DynamicOp_{capability}"
+    DynamicOp.__qualname__ = DynamicOp.__name__
+
+    if not lab.tools.has(capability):
+        lab.register_operation(DynamicOp)
 
 
 # ---------------------------------------------------------------------------
@@ -840,14 +1067,22 @@ async def list_escalations(request: Request) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for cid in scheduler._campaigns:
         for esc in lab.pending_escalations(cid):
-            out.append(
-                {
-                    "id": esc.id,
-                    "campaign_id": esc.campaign_id,
-                    "record_id": esc.record_id,
-                    "reason": esc.reason,
-                }
-            )
+            row: dict[str, Any] = {
+                "id": esc.id,
+                "campaign_id": esc.campaign_id,
+                "record_id": esc.record_id,
+                "reason": esc.reason,
+                "context": esc.context,
+            }
+            # Attach the triggering record's outputs for image preview
+            try:
+                rec = lab.ledger.get(esc.record_id)
+                if rec:
+                    row["operation"] = rec.operation
+                    row["outputs"] = rec.outputs
+            except Exception:  # noqa: BLE001
+                pass
+            out.append(row)
     return out
 
 

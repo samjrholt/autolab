@@ -14,14 +14,12 @@ Each row has these fixed columns::
     record_id, campaign_id, experiment_id, session_id,
     sample_id, operation, module, record_status,
     created_at, finalised_at, duration_ms,
-    gate_result, decision_grade,
-    checksum
+    gate_result, checksum
 
 plus flattened columns:
 
 - ``inputs.<name>`` — one per input key (nested dicts get dotted keys).
 - ``outputs.<name>`` — one per output key.
-- ``features.<name>`` — one per FeatureView field.
 - ``decision.<name>`` — one per planner decision key (e.g. ``decision.trial_number``).
 
 pandas is a **soft dependency** — the module imports it on demand so
@@ -64,7 +62,6 @@ _FIXED_COLUMNS = (
     "finalised_at",
     "duration_ms",
     "gate_result",
-    "decision_grade",
     "checksum",
 )
 
@@ -96,19 +93,12 @@ def record_to_row(record: Record) -> dict[str, Any]:
         "finalised_at": record.finalised_at,
         "duration_ms": record.duration_ms,
         "gate_result": record.gate_result,
-        "decision_grade": record.decision_grade,
         "checksum": record.checksum,
     }
     for k, v in (record.inputs or {}).items():
         _flatten(f"inputs.{k}", v, row)
     for k, v in (record.outputs or {}).items():
         _flatten(f"outputs.{k}", v, row)
-    if record.features is not None:
-        for name, feat in record.features.fields.items():
-            # Scalar features become a single column; non-scalar features
-            # (curves, images) keep their structured value so downstream
-            # code can decide what to do.
-            row[f"features.{name}"] = feat.value
     for k, v in (record.decision or {}).items():
         _flatten(f"decision.{k}", v, row)
     return row

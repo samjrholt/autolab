@@ -38,6 +38,32 @@ This is a 6-day solo build, but the bar is **beyond state of the art, not beyond
 
 If a proposed change makes the code more impressive but the concept more tangled, it is the wrong change. If it lands a world-leading beat without adding architectural complexity, it is the right one.
 
+## Design philosophy: Simple, Intuitive, Robust
+
+These three words govern every API decision, every class design, and every UI flow. They are borrowed from the original matdiscovery prototype and elevated to a first-class constraint.
+
+### Simple
+
+- **The framework is thin.** It manages the loop, wires modules together, and captures provenance. No elaborate class hierarchies, no deep inheritance trees, no wrapper layers.
+- **The Operation interface is minimal.** `async run(inputs) → OperationResult` is the ideal. An Operation declares its `capability` (scientist-named), its `resource_kind`, and its `module` version string. Everything else has sensible defaults. `OperationContext` exists as an optional side-channel — most Operations ignore it entirely.
+- **OperationResult is just `status` + `outputs`.** Returning `OperationResult(status="completed", outputs={"coercivity_kAm": 42.5})` is enough. `features`, `FeatureView`, `artefacts`, and the rest are power-user options, not requirements.
+- **If it needs a manual, it's too complicated.** A scientist should be able to read a 10-line Operation and understand the entire contract.
+
+### Intuitive
+
+- **ASE-style developer experience.** Sensible defaults that work out of the box. One-line component swapping. Uniform interfaces. If you've used ASE (Atomic Simulation Environment), you know the feeling: `atoms.get_potential_energy()` just works because the calculator is plugged in.
+- **The GUI is the primary surface.** Everything a scientist needs — registering resources, designing campaigns, watching execution, intervening, exporting data — happens through the Console. A scientist describes their lab in plain language and Claude proposes the setup. No YAML editing, no Python scripting required for the common path.
+- **LLM-assisted onboarding.** The Setup Assistant (⚙ → "Describe your lab") uses Claude to turn a natural-language description of equipment and goals into proposed resources and operations. The scientist reviews and approves. Nothing registers without human approval.
+- **Capability names are scientist-shaped.** `sintering`, `magnetometry`, `xrd` — not `MockSintering`, `ubermag_hysteresis`, `mammos_spindynamics_kuzmin_fit`. A capability name is the word a scientist would use when describing their workflow to a colleague.
+
+### Robust
+
+- **Provenance is the invariant.** The dataset is the asset. Every future change must preserve write-ahead provenance, append-only records, lineage, and reproducibility metadata. If you break provenance, you've broken the product.
+- **Failures are data, not exceptions.** A failed operation becomes a Record with `status: "failed"` and a reason. The Planner sees it in history and can adapt. Over time, failures become some of the most valuable data in the system.
+- **The framework never changes when a module changes.** The four-layer architecture (Data → Orchestration → Operations → Planning) has a clean dependency rule. Operations and Planners depend only on models. An Operation never imports the Orchestrator.
+- **Full-stack async, nothing blocks.** Every operation is `async`. The store uses `aiosqlite`. A 2-hour furnace run doesn't freeze the system.
+- **Restart-safe by construction.** The Lab rehydrates from its ledger on restart. In-flight records that were never finalised are detectable as orphaned "running" records.
+
 ## The Lab is a service, not a script
 
 One big shift from the hackathon-plan CLI framing: **the Lab itself is a long-running FastAPI server.** It is an institution, not an invocation. Consequences for the architecture:

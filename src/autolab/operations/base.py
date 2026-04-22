@@ -42,12 +42,28 @@ class OperationContext(BaseModel):
 
 
 class Operation(ABC):
-    """Abstract base — subclass to wire a real or simulated capability."""
+    """Abstract base — subclass to wire a real or simulated capability.
 
-    #: Capability name as a scientist would call it (e.g. `superellipse_hysteresis`).
+    The minimal Operation is three lines::
+
+        class MySintering(Operation):
+            capability = "sintering"
+            resource_kind = "furnace"
+
+            async def run(self, inputs):
+                result = do_sintering(inputs["temperature"], inputs["time_hours"])
+                return OperationResult(status="completed", outputs=result)
+
+    That's it. ``resource_kind``, ``module``, ``produces_sample``,
+    ``destructive``, ``requires`` all have sensible defaults. Most
+    Operations only need ``capability`` and ``run()``.
+    """
+
+    #: Capability name as a scientist would call it (e.g. ``sintering``,
+    #: ``magnetometry``, ``xrd``). Not a library name.
     capability: str = ""
 
-    #: Resource kind this Operation needs. `None` means no Resource gate.
+    #: Resource kind this Operation needs. ``None`` means no Resource gate.
     resource_kind: str | None = None
 
     #: Capability requirements on the matched Resource instance.
@@ -62,6 +78,10 @@ class Operation(ABC):
     #: Free-form module version string stamped into every Record.
     module: str = "anonymous.v0"
 
+    #: Typical duration in seconds — used for ETA projections until
+    #: the EstimationEngine has enough historical data.
+    typical_duration: float = 5
+
     def __init_subclass__(cls, **kwargs: Any) -> None:
         super().__init_subclass__(**kwargs)
         # Defensive copy so subclasses don't mutate the parent's dict.
@@ -71,18 +91,30 @@ class Operation(ABC):
     async def run(
         self,
         inputs: dict[str, Any],
-        context: OperationContext,
+        context: OperationContext | None = None,
     ) -> OperationResult:
-        """Execute one atomic step. Must be deterministic given the same inputs."""
+        """Execute one atomic step.
+
+        ``context`` is an optional side-channel — most Operations ignore
+        it entirely.  If your Operation just needs ``inputs`` and returns
+        ``OperationResult``, you can write ``async def run(self, inputs)``
+        and the framework will call it correctly.
+        """
 
     # ------------------------------------------------------------------
     # Convenience
     # ------------------------------------------------------------------
 
     @classmethod
-    async def call(cls, inputs: dict[str, Any], context: OperationContext) -> OperationResult:
+    async def call(cls, inputs: dict[str, Any], context: OperationContext | None = None) -> OperationResult:
         instance = cls()
-        result = instance.run(inputs, context)
+        # Support both run(inputs) and run(inputs, context) signatures.
+        sig = inspect.signature(instance.run)
+        params = [p for p in sig.parameters.values() if p.name != "self"]
+        if len(params) >= 2:
+            result = instance.run(inputs, context)
+        else:
+            result = instance.run(inputs)
         if inspect.isawaitable(result):
             return await result
         return result  # type: ignore[return-value]

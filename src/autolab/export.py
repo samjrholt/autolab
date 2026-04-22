@@ -89,7 +89,6 @@ def to_ro_crate(lab: Lab, *, campaign_id: str | None = None) -> dict[str, Any]:
             "autolab:module": rec.module,
             "autolab:resource_name": rec.resource_name,
             "autolab:failure_mode": rec.failure_mode,
-            "autolab:outcome_class": rec.outcome_class,
             "autolab:gate_result": rec.gate_result,
         }
         anns = lab.ledger.annotations(rec.id)

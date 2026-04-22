@@ -19,8 +19,8 @@ Planner class. The two are composable and swappable independently.
 Failure-aware heuristics
 ------------------------
 
-The default :class:`HeuristicPolicyProvider` reads two new fields on the
-:class:`~autolab.models.Record`:
+The default :class:`HeuristicPolicyProvider` reads one optional field on
+the :class:`~autolab.models.Record`:
 
 ``failure_mode``
     *Why* the operation stopped.  Drives the retry/escalate decision:
@@ -30,15 +30,10 @@ The default :class:`HeuristicPolicyProvider` reads two new fields on the
     - ``measurement_rejection`` → retry (sample intact, measurement was bad)
     - ``synthesis_deviation`` → continue/explore (unexpected but valid result)
 
-``outcome_class``
-    *What kind* of completed result this was.
-
-    - ``on_target`` → accept if gate passes, otherwise continue
-    - ``off_target`` → continue exploring; don't escalate a scientific deviation
-    - ``exceptional`` → accept immediately (significantly better than target)
-
-These distinctions matter because a failed furnace run should be retried
-while a synthesis that produced the wrong phase should be explored, not
+For *completed* Records, the :class:`~autolab.acceptance.GateVerdict` tells
+the policy whether the result met the acceptance criteria. Gate pass →
+``accept``; gate fail → ``replan``. A failed furnace run should be retried;
+a synthesis that produced an unexpected product should be explored, not
 discarded.
 """
 
@@ -82,9 +77,8 @@ class PlanContext:
 class DecisionContext:
     """Snapshot of campaign state handed to a PolicyProvider's ``decide()``.
 
-    Carries the just-finalised Record, the gate verdict, the failure and
-    outcome taxonomy fields from the Record, and the open Action set the
-    PolicyProvider may choose from.
+    Carries the just-finalised Record, the gate verdict, and the open
+    Action set the PolicyProvider may choose from.
     """
 
     campaign_id: str
@@ -98,10 +92,6 @@ class DecisionContext:
     @property
     def failure_mode(self) -> str | None:
         return self.record.failure_mode  # type: ignore[return-value]
-
-    @property
-    def outcome_class(self) -> str | None:
-        return self.record.outcome_class  # type: ignore[return-value]
 
 
 class PolicyProvider(ABC):
@@ -141,23 +131,20 @@ class HeuristicPolicyProvider(PolicyProvider):
     1. **Equipment failure + retry allowed + retries remaining** → ``retry_step``
        (instrument glitch; sample is unchanged, safe to retry)
 
-    2. **Process deviation + escalate allowed** → ``escalate``
-       (conditions drifted; a human should review before we retry)
-
-    3. **Measurement rejection + retry allowed + retries remaining** → ``retry_step``
+    2. **Measurement rejection + retry allowed + retries remaining** → ``retry_step``
        (measurement was bad; sample is intact, just re-measure)
 
-    4. **Synthesis deviation (off_target completed)** → ``continue``
-       (unexpected but valid result; keep exploring this branch)
+    3. **Process deviation + escalate allowed** → ``escalate``
+       (conditions drifted; a human should review before we retry)
 
-    5. **Exceptional outcome** → ``accept`` if allowed
-       (significantly better than target; take the win)
+    4. **Synthesis deviation** → ``continue``
+       (Operation reported the product differs from target; keep exploring)
 
-    6. **Gate pass** → ``accept`` if allowed
+    5. **Gate pass** → ``accept`` if allowed
 
-    7. **Gate fail** → ``replan`` if allowed, else ``continue``
+    6. **Gate fail** → ``replan`` if allowed, else ``continue``
 
-    8. **Otherwise** → ``continue``
+    7. **Otherwise** → ``continue``
     """
 
     def __init__(self, max_retries: int = 1) -> None:
@@ -167,7 +154,6 @@ class HeuristicPolicyProvider(PolicyProvider):
         rec = context.record
         allowed = set(context.allowed_actions)
         fmode = context.failure_mode
-        oclass = context.outcome_class
 
         # --- Equipment failure: retry if safe ---
         if (
@@ -214,21 +200,14 @@ class HeuristicPolicyProvider(PolicyProvider):
                     ),
                 )
 
-        # --- Synthesis deviation: continue exploring, don't retry ---
-        if oclass == "off_target" or fmode == "synthesis_deviation":
+        # --- Synthesis deviation: Operation self-reported off-target, keep exploring ---
+        if fmode == "synthesis_deviation":
             return Action(
                 type=ActionType.CONTINUE,
                 reason=(
                     f"synthesis_deviation on {rec.operation!r}; "
                     "unexpected product is a discovery — continuing exploration"
                 ),
-            )
-
-        # --- Exceptional result: accept immediately ---
-        if oclass == "exceptional" and ActionType.ACCEPT in allowed:
-            return Action(
-                type=ActionType.ACCEPT,
-                reason=f"exceptional outcome on {rec.operation!r}",
             )
 
         # --- Standard gate logic ---

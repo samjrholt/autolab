@@ -37,7 +37,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from autolab.models import Feature, FeatureView, OperationResult, Sample
+from autolab.models import OperationResult, Sample
 from autolab.operations.base import Operation, OperationContext
 
 from examples.mammos_sensor.vm import (
@@ -143,12 +143,6 @@ class StructureRelax(Operation):
         return OperationResult(
             status="completed",
             outputs=outputs,
-            features=_scalar_features(
-                a_ang=result["a_ang"],
-                c_ang=result["c_ang"],
-                volume_ang3=result["volume_ang3"],
-                energy_ev_per_atom=result["energy_ev_per_atom"],
-            ),
             new_sample=sample,
         )
 
@@ -215,15 +209,7 @@ class IntrinsicMagnetics0K(Operation):
             backend = "surrogate"
 
         outputs = {"backend": backend, **result}
-        return OperationResult(
-            status="completed",
-            outputs=outputs,
-            features=_scalar_features(
-                Ms0_A_per_m=result["Ms0_A_per_m"],
-                K1_0_J_per_m3=result["K1_0_J_per_m3"],
-                Aex0_J_per_m=result["Aex0_J_per_m"],
-            ),
-        )
+        return OperationResult(status="completed", outputs=outputs)
 
 
 # ---------------------------------------------------------------------------
@@ -297,16 +283,7 @@ class FiniteTemperatureMagnetics(Operation):
             backend = "surrogate"
 
         outputs = {"backend": backend, **result}
-        return OperationResult(
-            status="completed",
-            outputs=outputs,
-            features=_scalar_features(
-                Tc_K=result["Tc_K"],
-                Ms_T_A_per_m=result["Ms_T_A_per_m"],
-                K1_T_J_per_m3=result["K1_T_J_per_m3"],
-                Aex_T_J_per_m=result["Aex_T_J_per_m"],
-            ),
-        )
+        return OperationResult(status="completed", outputs=outputs)
 
 
 # ---------------------------------------------------------------------------
@@ -325,10 +302,6 @@ def _executor_from_ctx(ctx: OperationContext) -> VMExecutor:
     if isinstance(ex, VMExecutor):
         return ex
     return VMExecutor()
-
-
-def _scalar_features(**kv: float) -> FeatureView:
-    return FeatureView(fields={k: Feature(kind="scalar", value=float(v)) for k, v in kv.items()})
 
 
 # ---------------------------------------------------------------------------

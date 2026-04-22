@@ -1,4 +1,4 @@
-"""Tests for the failure taxonomy: FailureMode, OutcomeClass, and HeuristicPolicyProvider."""
+"""Tests for the failure taxonomy: FailureMode + HeuristicPolicyProvider."""
 
 from __future__ import annotations
 
@@ -92,25 +92,19 @@ class TestHeuristicPolicyProvider:
         assert "process_deviation" in action.reason
 
     def test_synthesis_deviation_continues_not_retries(self):
-        # Completed but off_target — scientifically interesting, keep exploring.
-        rec = _rec(record_status="completed", outcome_class="off_target", failure_mode=None)
+        # Operation self-reported the product differs from target — keep exploring.
+        rec = _rec(record_status="completed", failure_mode="synthesis_deviation")
         action = self.policy.decide(_ctx(rec, gate_result="fail", history=[rec]))
         assert action.type is ActionType.CONTINUE
-        assert "synthesis_deviation" in action.reason or "off_target" in action.reason
+        assert "synthesis_deviation" in action.reason
 
-    def test_exceptional_outcome_accepts_immediately(self):
-        rec = _rec(record_status="completed", outcome_class="exceptional", failure_mode=None)
-        action = self.policy.decide(_ctx(rec, gate_result="pass"))
-        assert action.type is ActionType.ACCEPT
-        assert "exceptional" in action.reason
-
-    def test_on_target_accepts_when_gate_passes(self):
-        rec = _rec(record_status="completed", outcome_class="on_target", failure_mode=None)
+    def test_gate_pass_accepts(self):
+        rec = _rec(record_status="completed", failure_mode=None)
         action = self.policy.decide(_ctx(rec, gate_result="pass"))
         assert action.type is ActionType.ACCEPT
 
     def test_gate_fail_replans(self):
-        rec = _rec(record_status="completed", outcome_class="on_target", failure_mode=None)
+        rec = _rec(record_status="completed", failure_mode=None)
         action = self.policy.decide(_ctx(rec, gate_result="fail"))
         assert action.type is ActionType.REPLAN
 
@@ -228,7 +222,10 @@ async def test_orchestrator_stamps_process_deviation(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_orchestrator_stamps_off_target_when_gate_fails(tmp_path):
+async def test_orchestrator_gate_fails_when_outputs_miss_target(tmp_path):
+    """A completed Operation whose outputs miss the acceptance rules
+    gets a ``fail`` gate verdict — but remains ``record_status=completed``.
+    The Planner decides what to do (typically REPLAN)."""
     with Lab(tmp_path, lab_id="lab-test") as lab:
         lab.register_resource(Resource(name="pc", kind="computer"))
         lab.register_tool_dict(_OFF_TARGET_DECL)
@@ -242,5 +239,4 @@ async def test_orchestrator_stamps_off_target_when_gate_fails(tmp_path):
         rec, gate = await lab.orchestrator.run_step(step, run, acceptance=criteria)
 
         assert rec.record_status == "completed"
-        assert rec.outcome_class == "off_target"
         assert gate.result == "fail"

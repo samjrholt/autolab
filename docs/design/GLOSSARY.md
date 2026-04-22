@@ -54,9 +54,6 @@ One execution context in which Records are produced. Carries the `EnvironmentSna
 **EnvironmentSnapshot**
 Python version, package versions, git commit, random seeds, platform, hostname. Captured once per Session, linked via `session_id`.
 
-**FeatureView**
-The typed, ML-ready view of an Operation's outputs. Fields have a fixed set of kinds: `scalar` (with unit), `curve` (1-D series), `image` (2-D array or rendered PNG pointer), `spectrum` (labelled peaks), `pointer` (hash to a blob stored outside the Record). Not `dict[str, float]`. Flattening to a DataFrame is a derived view, not the contract.
-
 **Annotation**
 An append-only post-hoc addition to an existing Record. Retractions, corrections, notes, re-QC verdicts, human commentary. The Annotation itself is a Record; the original is never touched.
 

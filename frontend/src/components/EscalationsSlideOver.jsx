@@ -56,6 +56,25 @@ export default function EscalationsSlideOver({ open, onClose, refresh }) {
   );
 }
 
+/** Find any image URL or base64 in the outputs dict. */
+function findImageInOutputs(outputs) {
+  if (!outputs) return null;
+  for (const [key, val] of Object.entries(outputs)) {
+    if (typeof val === "string") {
+      if (val.startsWith("data:image/") || /\.(png|jpg|jpeg|gif|svg)$/i.test(val)) return val;
+    }
+    if (key === "figure_png" || key === "image" || key === "plot") {
+      if (typeof val === "string") {
+        // Could be base64 without prefix
+        if (val.length > 100 && !val.includes(" ")) return `data:image/png;base64,${val}`;
+      }
+    }
+  }
+  return null;
+}
+
+const DEFAULT_ACTIONS = ["continue", "retry", "stop", "add_step"];
+
 function EscalationCard({ escalation, onResolve }) {
   const [choice, setChoice] = useState("");
   const [note, setNote] = useState("");
@@ -68,6 +87,9 @@ function EscalationCard({ escalation, onResolve }) {
     setBusy(false);
   };
 
+  const imageUrl = findImageInOutputs(escalation.outputs);
+  const options = escalation.options?.length > 0 ? escalation.options : DEFAULT_ACTIONS;
+
   return (
     <motion.div
       variants={fadeInUp}
@@ -79,24 +101,39 @@ function EscalationCard({ escalation, onResolve }) {
       <p className="text-[13px] text-[var(--color-secondary)] mb-3">
         {escalation.reason || escalation.message || "The planner needs guidance."}
       </p>
-      {escalation.options?.length > 0 && (
-        <div className="flex flex-wrap gap-2 mb-3">
-          {escalation.options.map((opt) => (
-            <button
-              key={opt}
-              type="button"
-              onClick={() => setChoice(opt)}
-              className={`bg-transparent border rounded-full px-3 py-1 text-[12px] transition-all ${
-                choice === opt
-                  ? "border-white text-white"
-                  : "border-[var(--color-line)] text-[var(--color-secondary)] hover:border-[var(--color-line-hover)]"
-              }`}
-            >
-              {opt}
-            </button>
+
+      {/* Image preview from outputs */}
+      {imageUrl && (
+        <div className="mb-3 rounded-xl overflow-hidden border border-[var(--color-line)]">
+          <img src={imageUrl} alt="Result figure" className="w-full h-auto max-h-[200px] object-contain bg-white/5" />
+        </div>
+      )}
+
+      {/* Context data if present */}
+      {escalation.context && Object.keys(escalation.context).length > 0 && (
+        <div className="mb-3 text-[12px] text-[var(--color-tertiary)] border-l-2 border-[var(--color-line)] pl-3">
+          {Object.entries(escalation.context).map(([k, v]) => (
+            <div key={k}><span className="text-[var(--color-secondary)]">{k}:</span> {typeof v === "object" ? JSON.stringify(v) : String(v)}</div>
           ))}
         </div>
       )}
+
+      <div className="flex flex-wrap gap-2 mb-3">
+        {options.map((opt) => (
+          <button
+            key={opt}
+            type="button"
+            onClick={() => setChoice(opt)}
+            className={`bg-transparent border rounded-full px-3 py-1 text-[12px] transition-all ${
+              choice === opt
+                ? "border-white text-white"
+                : "border-[var(--color-line)] text-[var(--color-secondary)] hover:border-[var(--color-line-hover)]"
+            }`}
+          >
+            {opt}
+          </button>
+        ))}
+      </div>
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}

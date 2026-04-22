@@ -16,11 +16,8 @@ import pytest
 from autolab import (
     AcceptanceCriteria,
     Campaign,
-    Feature,
-    FeatureView,
     Lab,
     Objective,
-    OperationContext,
     OperationResult,
     Resource,
 )
@@ -39,14 +36,13 @@ class StubOp(Operation):
     produces_sample = True
     module = "stub.v1"
 
-    async def run(self, inputs: dict[str, Any], context: OperationContext) -> OperationResult:
+    async def run(self, inputs: dict[str, Any]) -> OperationResult:
         x = float(inputs["x"])
         target = float(inputs.get("target", 0.5))
         score = -((x - target) ** 2)
         return OperationResult(
             status="completed",
             outputs={"x": x, "score": score},
-            features=FeatureView(fields={"score": Feature(kind="scalar", value=score)}),
         )
 
 
@@ -57,7 +53,7 @@ class AlwaysFailsOp(Operation):
     resource_kind = "computer"
     module = "always_fails.v1"
 
-    async def run(self, inputs: dict[str, Any], context: OperationContext) -> OperationResult:
+    async def run(self, inputs: dict[str, Any]) -> OperationResult:
         raise RuntimeError("planned failure")
 
 

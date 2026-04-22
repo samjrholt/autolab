@@ -21,7 +21,7 @@ from typing import Any
 
 import numpy as np
 
-from autolab.models import Feature, FeatureView, OperationResult, Sample
+from autolab.models import OperationResult, Sample
 from autolab.operations.base import Operation, OperationContext
 
 from .geometry import superellipse_area_nm2, superellipse_indicator
@@ -259,16 +259,6 @@ class SuperellipseHysteresis(Operation):
                 float(inputs["a"]), float(inputs["b"]), float(inputs["n"])
             ),
         }
-        features = FeatureView(
-            fields={
-                "Hc": Feature(kind="scalar", value=metrics["Hc"], unit="A/m"),
-                "Mr_over_Ms": Feature(kind="scalar", value=metrics["Mr_over_Ms"]),
-                "sensitivity": Feature(kind="scalar", value=metrics["sensitivity"], unit="1/T"),
-                "linear_range": Feature(kind="scalar", value=metrics["linear_range"], unit="T"),
-                "loop": Feature(kind="curve", value=outputs["loop"]),
-            }
-        )
-
         sample = Sample(
             label=f"superellipse a={inputs['a']}nm b={inputs['b']}nm n={inputs['n']}",
             metadata={"module": module, "geometry_area_nm2": outputs["geometry_area_nm2"]},
@@ -277,14 +267,8 @@ class SuperellipseHysteresis(Operation):
         return OperationResult(
             status="completed",
             outputs=outputs,
-            features=features,
             new_sample=sample,
         )
-
-    # The orchestrator's `Operation.call` reads `cls.module` once at write-ahead
-    # time. We override here so the *runtime* surrogate flag overrides the class
-    # default in the Record only via OperationResult metadata. (For now, callers
-    # can read the loop's `module` key through the FeatureView/outputs.)
 
 
 __all__ = ["SuperellipseHysteresis"]

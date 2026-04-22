@@ -26,7 +26,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from autolab.models import Feature, FeatureView, OperationResult
+from autolab.models import OperationResult
 from autolab.operations.base import Operation, OperationContext
 
 
@@ -105,9 +105,6 @@ class AnnotationExtract(Operation):
                     "source_annotation_count": 0,
                     "model": "n/a",
                 },
-                features=FeatureView(fields={
-                    "confidence": Feature(kind="scalar", value=0.0),
-                }),
             )
 
         target = lab.ledger.get(parsed.target_record_id)
@@ -128,15 +125,7 @@ class AnnotationExtract(Operation):
             "source_annotation_count": len(notes),
             "model": resp.model,
         }
-        return OperationResult(
-            status="completed",
-            outputs=out,
-            features=FeatureView(
-                fields={
-                    "confidence": Feature(kind="scalar", value=out["confidence"]),
-                }
-            ),
-        )
+        return OperationResult(status="completed", outputs=out)
 
 
 __all__ = ["AnnotationExtract"]
