@@ -393,6 +393,7 @@ def _ensure_repo_on_path() -> None:
 def _bootstrap(lab: Lab) -> None:
     _ensure_repo_on_path()
     mode = os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic")
+    log.info("bootstrap mode: %r  (cwd=%s, sys.path[0]=%s)", mode, Path.cwd(), sys.path[0] if sys.path else "(empty)")
     # annotation_extract is always available regardless of mode.
     _register_annotation_extract(lab)
     if mode in ("none", ""):
@@ -436,8 +437,15 @@ def _bootstrap(lab: Lab) -> None:
         try:
             from examples.wsl_demo.bootstrap import bootstrap as _wsl_demo_boot
             _wsl_demo_boot(lab)
+            log.info(
+                "wsl_demo bootstrap OK — resources=%s tools=%s workflows=%s",
+                [r.name for r in lab.resources.list()],
+                [d.capability for d in lab.tools.list()],
+                list(lab._workflows.keys()),
+            )
         except Exception as exc:  # noqa: BLE001
-            log.warning("wsl_demo bootstrap failed (%s)", exc)
+            import traceback as _tb
+            log.error("wsl_demo bootstrap FAILED — %s\n%s", exc, _tb.format_exc())
         return
     # Custom dotted path module:function
     if ":" in mode:
@@ -1317,6 +1325,27 @@ async def verify(request: Request) -> dict[str, Any]:
     lab = _lab(request)
     bad = lab.verify_ledger()
     return {"ok": not bad, "bad_record_ids": bad}
+
+
+@app.get("/debug/bootstrap")
+async def debug_bootstrap(request: Request) -> dict[str, Any]:
+    """Human-readable summary of what got registered at startup.
+    Visit http://localhost:8000/debug/bootstrap if the UI shows empty library.
+    """
+    lab = _lab(request)
+    return {
+        "bootstrap_mode": os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic (default)"),
+        "cwd": str(Path.cwd()),
+        "examples_on_path": any("autolab" in p for p in sys.path),
+        "resources": [r.name for r in lab.resources.list()],
+        "capabilities": [d.capability for d in lab.tools.list()],
+        "workflows": list(lab._workflows.keys()),
+        "hint": (
+            "If resources/capabilities/workflows are empty, check server startup logs "
+            "for 'bootstrap FAILED' messages. Common cause: AUTOLAB_BOOTSTRAP env var "
+            "not passed through to the server process."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------

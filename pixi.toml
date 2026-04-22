@@ -25,10 +25,17 @@ autolab = { path = ".", editable = true, extras = ["dev"] }
 [tasks]
 # Boot the Lab locally with autoreload. This is the default entry point —
 # the Lab is a long-running service, not a one-shot CLI.
-serve = { cmd = "uvicorn autolab.server.app:app --reload --port 8000", env = { PYTHONPATH = "." } }
+# Serve with a specific bootstrap. --bootstrap arg sets AUTOLAB_BOOTSTRAP before
+# uvicorn starts so there is no shell env var dependency.
+#   pixi run serve                  # default (demo_quadratic)
+#   pixi run serve --bootstrap wsl_demo
+#   pixi run serve --bootstrap add_demo
+serve     = { cmd = "python -m autolab.server.cli --reload", env = { PYTHONPATH = "." } }
+serve-wsl = { cmd = "python -m autolab.server.cli --bootstrap wsl_demo --reload", env = { PYTHONPATH = "." } }
+serve-add = { cmd = "python -m autolab.server.cli --bootstrap add_demo --reload", env = { PYTHONPATH = "." } }
 
-# Boot the Lab without reload (closer to production mode).
-serve-prod = { cmd = "uvicorn autolab.server.app:app --host 0.0.0.0 --port 8000", env = { PYTHONPATH = "." } }
+# Boot without reload (production mode).
+serve-prod = { cmd = "python -m autolab.server.cli --host 0.0.0.0", env = { PYTHONPATH = "." } }
 
 # Run the full test suite.
 test = "pytest"
