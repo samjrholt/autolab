@@ -42,7 +42,7 @@ function StepCard({ step, index }) {
   );
 }
 
-export default function WorkflowDetailPage({ workflow, onBack }) {
+export default function WorkflowDetailPage({ workflow, onBack, onEdit }) {
   if (!workflow) {
     return (
       <div className="empty-state">
@@ -63,7 +63,17 @@ export default function WorkflowDetailPage({ workflow, onBack }) {
           ← Workflows
         </button>
       </div>
-      <PageHeader title={workflow.name} description={workflow.description || `${steps.length} step${steps.length === 1 ? "" : "s"}`} />
+      <PageHeader
+        title={workflow.name}
+        description={workflow.description || `${steps.length} step${steps.length === 1 ? "" : "s"}`}
+        primaryAction={
+          onEdit ? (
+            <button type="button" className="btn-primary" onClick={onEdit}>
+              Edit on canvas
+            </button>
+          ) : null
+        }
+      />
 
       <div className="panel" style={{ padding: 14, maxWidth: 880 }}>
         <div style={{ fontSize: 10, textTransform: "uppercase", letterSpacing: 0.07, color: "var(--color-tertiary)", marginBottom: 10 }}>

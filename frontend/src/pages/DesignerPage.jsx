@@ -1,6 +1,8 @@
 import { useState } from "react";
 import PageHeader from "../shell/PageHeader";
 import { postJson } from "../lib/api";
+import WorkflowCanvasEditor from "./designer/workflow/WorkflowCanvasEditor";
+import NewCapabilityInline from "./designer/workflow/NewCapabilityInline";
 
 /**
  * Claude-assisted designer for a single kind of entity.
@@ -8,6 +10,9 @@ import { postJson } from "../lib/api";
  * Kinds: "workflow" | "resource" | "capability". Each kind hits its
  * existing server endpoint — /workflows/design, /resources/design,
  * /tools/design — and then a POST to register the approved proposal.
+ *
+ * Workflows additionally support a "Build" mode backed by a React Flow
+ * canvas: drag capabilities, connect data edges, edit step props.
  */
 
 const KINDS = {
@@ -15,18 +20,19 @@ const KINDS = {
     label: "Workflow",
     title: "New workflow",
     description:
-      "Describe the multi-step procedure you want to run. Claude will propose a workflow template; nothing registers without your approval.",
+      "Describe the multi-step procedure you want to run, or compose it directly on the canvas.",
     placeholder: "Sinter at 1100 C for 4 hours, then measure hysteresis, then export to RO-Crate…",
     designEndpoint: "/workflows/design",
     applyEndpoint: "/workflows",
     extractProposal: (r) => r.workflow,
     buildApplyBody: (w) => w,
+    supportsCanvas: true,
   },
   resource: {
     label: "Resource",
     title: "Register resource",
     description:
-      "Describe a piece of equipment, a compute host, or a simulator. Claude drafts a Resource declaration — name, kind, capabilities, typical durations.",
+      "Describe a piece of equipment, a compute host, or a simulator. Claude drafts a Resource declaration.",
     placeholder: "A WSL host named wsl-dev with 8 cores and an A100 GPU, used for magnetic simulations…",
     designEndpoint: "/resources/design",
     applyEndpoint: "/resources",
@@ -37,7 +43,7 @@ const KINDS = {
     label: "Capability",
     title: "Add capability",
     description:
-      "Describe something the lab should be able to do — a script, an MCP tool, an instrument routine. Claude drafts the capability declaration.",
+      "Describe something the lab should be able to do — a script, an MCP tool, an instrument routine.",
     placeholder: "A Python script at ~/code/my-sim I run with pixi run simulate that takes a config.yaml and writes results/loop.png…",
     designEndpoint: "/tools/design",
     applyEndpoint: "/tools/register-yaml",
@@ -79,17 +85,12 @@ function ProposalView({ proposal, kind }) {
   );
 }
 
-export default function DesignerPage({ kind, status, refresh, onDone }) {
-  const config = KINDS[kind];
-  if (!config) return null;
-
+function DescribeMode({ config, status, refresh, registered, setRegistered }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [proposal, setProposal] = useState(null);
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
-  const [registered, setRegistered] = useState(false);
-
   const keyMissing = status && !status.claude_configured;
 
   const design = async () => {
@@ -104,9 +105,7 @@ export default function DesignerPage({ kind, status, refresh, onDone }) {
       const p = config.extractProposal(result);
       setProposal(p);
       setNotes(result.notes || "");
-      if (!p) {
-        setError("Claude returned no concrete proposal — try a more specific description.");
-      }
+      if (!p) setError("Claude returned no concrete proposal — try a more specific description.");
     } catch (err) {
       setError(String(err));
     } finally {
@@ -119,8 +118,7 @@ export default function DesignerPage({ kind, status, refresh, onDone }) {
     setBusy(true);
     setError("");
     try {
-      const body = config.buildApplyBody(proposal);
-      await postJson(config.applyEndpoint, body);
+      await postJson(config.applyEndpoint, config.buildApplyBody(proposal));
       setRegistered(true);
       if (refresh) await refresh();
     } catch (err) {
@@ -129,6 +127,174 @@ export default function DesignerPage({ kind, status, refresh, onDone }) {
       setBusy(false);
     }
   };
+
+  if (keyMissing) {
+    return (
+      <div className="panel empty-state">
+        <h3>Anthropic API key not detected</h3>
+        <p>
+          The designer uses Claude to draft proposals. Set <code>ANTHROPIC_API_KEY</code> in
+          your environment or <code>~/.autolab/env</code> and restart the lab.
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="panel" style={{ padding: 16, maxWidth: 860 }}>
+      <label
+        style={{
+          display: "block",
+          fontSize: 11,
+          textTransform: "uppercase",
+          letterSpacing: 0.07,
+          color: "var(--color-tertiary)",
+          marginBottom: 8,
+        }}
+      >
+        Describe what you want
+      </label>
+      <textarea
+        value={input}
+        onChange={(e) => setInput(e.target.value)}
+        placeholder={config.placeholder}
+        disabled={busy}
+        rows={4}
+        style={{
+          width: "100%",
+          background: "var(--color-canvas)",
+          border: "1px solid var(--color-line-strong)",
+          borderRadius: 5,
+          padding: 10,
+          color: "var(--color-text)",
+          fontSize: 13,
+          resize: "vertical",
+          marginBottom: 10,
+        }}
+      />
+      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+        <button type="button" onClick={design} disabled={busy || !input.trim()} className="btn-primary">
+          {busy && !proposal ? "Drafting…" : "Draft with Claude"}
+        </button>
+        {proposal && !registered ? (
+          <button type="button" onClick={apply} disabled={busy} className="btn-secondary">
+            {busy ? "Registering…" : `Register ${config.label}`}
+          </button>
+        ) : null}
+        {registered ? (
+          <span style={{ color: "var(--color-status-green)", fontSize: 12 }}>
+            ✓ {config.label} registered
+          </span>
+        ) : null}
+      </div>
+
+      {error ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 10,
+            borderRadius: 5,
+            background: "rgba(214, 102, 102, 0.08)",
+            border: "1px solid rgba(214, 102, 102, 0.3)",
+            fontSize: 12,
+            color: "var(--color-status-red)",
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {notes ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: "var(--color-canvas)",
+            borderRadius: 5,
+            fontSize: 12,
+            color: "var(--color-muted)",
+          }}
+        >
+          {notes}
+        </div>
+      ) : null}
+
+      <ProposalView proposal={proposal} kind={config.label} />
+    </div>
+  );
+}
+
+function BuildMode({ status, refresh, onDone, initial }) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [inlineOpen, setInlineOpen] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(true);
+
+  const tools = status?.tools || [];
+
+  const save = async (body) => {
+    setSaving(true);
+    setError("");
+    try {
+      await postJson("/workflows", body);
+      if (refresh) await refresh();
+      if (onDone) onDone();
+    } catch (e) {
+      setError(String(e));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="panel" style={{ padding: 0, overflow: "hidden" }}>
+      {error ? (
+        <div
+          style={{
+            background: "rgba(214,102,102,0.08)",
+            borderBottom: "1px solid rgba(214,102,102,0.3)",
+            color: "var(--color-status-red)",
+            fontSize: 12,
+            padding: "6px 12px",
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
+      <WorkflowCanvasEditor
+        initial={initial}
+        tools={tools}
+        saving={saving}
+        pickerOpen={pickerOpen}
+        onTogglePicker={() => setPickerOpen((v) => !v)}
+        onSave={save}
+        onCancel={onDone || (() => {})}
+        onRequestNewCapability={() => setInlineOpen(true)}
+      />
+      <NewCapabilityInline
+        open={inlineOpen}
+        onClose={() => setInlineOpen(false)}
+        claudeConfigured={!!status?.claude_configured}
+        onRegistered={async () => {
+          setInlineOpen(false);
+          if (refresh) await refresh();
+        }}
+      />
+    </div>
+  );
+}
+
+export default function DesignerPage({ kind, status, refresh, onDone, initial }) {
+  const config = KINDS[kind];
+  if (!config) return null;
+
+  // For workflows, default to Build when we have any capabilities registered
+  // or an initial template to edit — scientists mostly prefer the visual surface.
+  const hasTools = (status?.tools || []).length > 0;
+  const [mode, setMode] = useState(
+    config.supportsCanvas && (initial || hasTools) ? "build" : "describe",
+  );
+  const [registered, setRegistered] = useState(false);
 
   return (
     <>
@@ -144,95 +310,37 @@ export default function DesignerPage({ kind, status, refresh, onDone }) {
         }
       />
 
-      {keyMissing ? (
-        <div className="panel empty-state">
-          <h3>Anthropic API key not detected</h3>
-          <p>
-            The designer uses Claude to draft proposals. Set <code>ANTHROPIC_API_KEY</code> in
-            your environment or <code>~/.autolab/env</code> and restart the lab.
-          </p>
-        </div>
-      ) : (
-        <div className="panel" style={{ padding: 16, maxWidth: 860 }}>
-          <label
-            style={{
-              display: "block",
-              fontSize: 11,
-              textTransform: "uppercase",
-              letterSpacing: 0.07,
-              color: "var(--color-tertiary)",
-              marginBottom: 8,
-            }}
+      {config.supportsCanvas ? (
+        <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+          <button
+            type="button"
+            className={mode === "describe" ? "btn-secondary" : "btn-ghost"}
+            onClick={() => setMode("describe")}
+            style={{ fontSize: 12 }}
           >
-            Describe what you want
-          </label>
-          <textarea
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder={config.placeholder}
-            disabled={busy}
-            rows={4}
-            style={{
-              width: "100%",
-              background: "var(--color-canvas)",
-              border: "1px solid var(--color-line-strong)",
-              borderRadius: 5,
-              padding: 10,
-              color: "var(--color-text)",
-              fontSize: 13,
-              resize: "vertical",
-              marginBottom: 10,
-            }}
-          />
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <button type="button" onClick={design} disabled={busy || !input.trim()} className="btn-primary">
-              {busy && !proposal ? "Drafting…" : "Draft with Claude"}
-            </button>
-            {proposal && !registered ? (
-              <button type="button" onClick={apply} disabled={busy} className="btn-secondary">
-                {busy ? "Registering…" : `Register ${config.label}`}
-              </button>
-            ) : null}
-            {registered ? (
-              <span style={{ color: "var(--color-status-green)", fontSize: 12 }}>
-                ✓ {config.label} registered
-              </span>
-            ) : null}
-          </div>
-
-          {error ? (
-            <div
-              style={{
-                marginTop: 12,
-                padding: 10,
-                borderRadius: 5,
-                background: "rgba(214, 102, 102, 0.08)",
-                border: "1px solid rgba(214, 102, 102, 0.3)",
-                fontSize: 12,
-                color: "var(--color-status-red)",
-              }}
-            >
-              {error}
-            </div>
-          ) : null}
-
-          {notes ? (
-            <div
-              style={{
-                marginTop: 12,
-                padding: 10,
-                background: "var(--color-canvas)",
-                borderRadius: 5,
-                fontSize: 12,
-                color: "var(--color-muted)",
-              }}
-            >
-              {notes}
-            </div>
-          ) : null}
-
-          <ProposalView proposal={proposal} kind={config.label} />
+            Describe
+          </button>
+          <button
+            type="button"
+            className={mode === "build" ? "btn-secondary" : "btn-ghost"}
+            onClick={() => setMode("build")}
+            style={{ fontSize: 12 }}
+          >
+            Build
+          </button>
         </div>
+      ) : null}
+
+      {config.supportsCanvas && mode === "build" ? (
+        <BuildMode status={status} refresh={refresh} onDone={onDone} initial={initial} />
+      ) : (
+        <DescribeMode
+          config={config}
+          status={status}
+          refresh={refresh}
+          registered={registered}
+          setRegistered={setRegistered}
+        />
       )}
     </>
   );

@@ -11,9 +11,13 @@ test.describe("Library flows — rows navigate, CTAs open designer", () => {
   test("clicking + New workflow routes to the workflow designer (not Settings)", async ({ page }) => {
     await navigateTo(page, "Workflows");
     await page.getByRole("button", { name: /New workflow/i }).first().click();
-    // DesignerPage renders the title "New workflow" and a Claude drafting textarea
+    // DesignerPage renders the title "New workflow" and the Describe/Build toggle.
     await expect(page.getByRole("heading", { name: "New workflow", exact: true })).toBeVisible();
-    await expect(page.locator("textarea")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Describe", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Build", exact: true })).toBeVisible();
+    // Switching to Describe reveals the Claude prompt textarea.
+    await page.getByRole("button", { name: "Describe", exact: true }).click();
+    await expect(page.locator("textarea").first()).toBeVisible();
   });
 
   test("clicking + Register resource routes to the resource designer", async ({ page }) => {

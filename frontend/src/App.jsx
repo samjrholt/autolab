@@ -175,6 +175,9 @@ export default function App() {
         <WorkflowDetailPage
           workflow={selectedWorkflow}
           onBack={() => navigate({ page: "workflows" })}
+          onEdit={() =>
+            navigate({ page: "designer", kind: "workflow", editing: selectedWorkflow })
+          }
         />
       );
     }
@@ -190,6 +193,7 @@ export default function App() {
           kind={route.kind}
           status={status}
           refresh={refresh}
+          initial={route.editing || null}
           onDone={() => navigate({ page: backTarget })}
         />
       );
