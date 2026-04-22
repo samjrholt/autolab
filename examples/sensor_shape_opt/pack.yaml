@@ -1,0 +1,54 @@
+# examples/sensor_shape_opt/pack.yaml — Example pack metadata.
+#
+# An example pack is a removable, self-contained bundle of
+# Capabilities, Workflows, and supporting code that demonstrates a
+# real scientific workflow on top of autolab. Installing a pack copies
+# its Capability declarations into the user's lab, tagged with
+# ``source: example:sensor_shape_opt`` so they're distinguishable from
+# hand-authored ones. Uninstalling removes the Capabilities but
+# preserves the Records they produced (provenance is immutable).
+#
+# This pack reimplements the MaMMoS demonstrator sensor shape
+# optimisation (https://mammos-project.github.io/mammos/demonstrator/sensor.html)
+# as an autolab Campaign, with Claude vision replacing Bayesian
+# optimisation as the PolicyProvider. Running both side-by-side is
+# the demo's hero comparison.
+
+name: sensor_shape_opt
+version: 0.1.0
+title: Magnetic sensor shape optimisation
+description: |
+  Optimise a diamond-shaped magnetic sensor's (sx, sy) dimensions to
+  maximise the linear response region of its hysteresis loop. Two
+  interchangeable PolicyProviders: `ClaudeVisionPolicy` (Opus 4.7
+  reads hysteresis PNGs + extracted scalars, proposes next point)
+  and `BOPolicy` (classic Bayesian optimisation via
+  bayesian-optimization). Demo-on-stage: run both, watch Claude
+  converge by seeing when the scalar objective is lying.
+
+prerequisites:
+  - python:ubermag
+  - python:oommfc
+  - python:mammos-analysis
+  - python:mammos-spindynamics
+  - python:bayesian-optimization
+
+install:
+  # What gets copied into the user's lab on install.
+  capabilities:
+    - ms_temperature_lookup
+    - kuzmin_properties
+    - sensor_simulate
+    - find_linear_segment
+    - sensor_interpret
+  workflows:
+    - sensor_shape_optimize
+  # The adapter code that backs these Capabilities lives under
+  # ``examples/sensor_shape_opt/adapters/``. Installing the pack wires
+  # each Capability YAML to its adapter; uninstalling unwires them.
+
+# Status: scaffolded per docs/superpowers/specs/2026-04-22-
+# onboarding-and-remote-execution-design.md and
+# docs/superpowers/specs/2026-04-22-*-sensor-demo. The adapters wrap
+# the MaMMoS demonstrator code in the ``repo/`` subdirectory; see
+# README.md for the install walkthrough.

@@ -10,6 +10,7 @@ import CapabilitiesPage from "./pages/CapabilitiesPage";
 import WorkflowsPage from "./pages/WorkflowsPage";
 import LedgerPage from "./pages/LedgerPage";
 import SettingsPage from "./pages/SettingsPage";
+import AssistantPage from "./pages/AssistantPage";
 
 import RecordDetail from "./components/RecordDetail";
 import NewCampaignSlideOver from "./components/NewCampaignSlideOver";
@@ -23,6 +24,7 @@ const CRUMBS = {
   capabilities: ["Library", "Capabilities"],
   workflows: ["Library", "Workflows"],
   ledger: ["Ledger"],
+  assistant: ["Setup", "Assistant"],
   settings: ["Settings"],
 };
 
@@ -103,13 +105,14 @@ export default function App() {
     if (route.page === "ledger") {
       return <LedgerPage records={records} onSelectRecord={setSelectedRecord} />;
     }
+    if (route.page === "assistant") {
+      return <AssistantPage status={status} refresh={refresh} />;
+    }
     if (route.page === "settings") {
       return (
         <SettingsPage
           status={status}
-          onOpenAssistant={() => {
-            /* TODO: open onboarding wizard */
-          }}
+          onOpenAssistant={() => navigate({ page: "assistant" })}
         />
       );
     }

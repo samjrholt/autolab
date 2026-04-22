@@ -71,6 +71,9 @@ export default function Sidebar({ route, navigate, labName = "default" }) {
 
       <SidebarItem label="Ledger" icon="≡" active={is("ledger")} onClick={() => navigate({ page: "ledger" })} />
 
+      <div className="sidebar-header">Setup</div>
+      <SidebarItem label="Assistant" icon="✨" active={is("assistant")} onClick={() => navigate({ page: "assistant" })} />
+
       <div style={{ flex: 1 }} />
 
       <div className="sidebar-header">Workspace</div>
