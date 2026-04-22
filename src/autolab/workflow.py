@@ -9,10 +9,24 @@ and wires upstream outputs into downstream inputs via ``input_mappings``.
 Design
 ------
 
-The engine is deliberately thin.  It does not contain a planner or a
-policy — it only materialises a pre-specified workflow.  Adaptive replanning
-(``react()``) is the Planner's domain; the WorkflowEngine handles the
-deterministic part of the execution.
+The engine is thin but **reactive**.  It does not own a Planner, but it
+accepts an optional ``step_hook`` callback that fires after every step.
+The hook receives the :class:`StepResult` and returns an
+:class:`~autolab.models.Action` (or ``None`` to continue normally).
+
+This lets the CampaignRunner plug the Planner's ``react()`` into the
+workflow DAG so that a mid-workflow failure or unexpected result triggers
+retry / escalation / stop — not silent skipping.
+
+Supported hook actions:
+
+- ``continue`` / ``accept`` / ``None`` — proceed with the DAG normally.
+- ``retry_step`` — re-run the same step (up to a caller-set limit).
+- ``stop`` — abort the remaining DAG; ``WorkflowResult.stopped`` is set.
+- ``add_step`` — the payload is surfaced in ``WorkflowResult.deferred_actions``
+  for the caller (CampaignRunner) to handle after the workflow returns.
+- ``escalate`` — likewise surfaced in ``deferred_actions``.
+- ``replan`` — likewise surfaced in ``deferred_actions``.
 
 Each step is submitted to the Orchestrator as a :class:`~autolab.models.ProposedStep`
 with an ``experiment_id`` scoped to the workflow run.  Results are
@@ -50,23 +64,25 @@ If both ``inputs`` and ``input_mappings`` provide the same key,
 Failure handling
 ----------------
 
-If a step fails, subsequent steps that depend on it are skipped with
-``record_status="proposed"`` and a note in their decision dict.  Steps
-with no dependency on the failed branch continue running.  The
-``WorkflowResult.completed`` flag is ``False`` if any step ended with
-``record_status="failed"``.
+If a step fails and no ``step_hook`` is provided, subsequent steps that
+depend on it are skipped (the legacy behaviour).  When a ``step_hook``
+*is* provided, the hook decides: ``retry_step`` re-runs the step,
+``stop`` aborts, and ``continue`` lets the skip cascade proceed.
 """
 
 from __future__ import annotations
 
 import asyncio
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
 from autolab.acceptance import GateVerdict
 from autolab.models import (
     AcceptanceCriteria,
+    Action,
+    ActionType,
     ProposedStep,
     Record,
     Sample,
@@ -74,6 +90,10 @@ from autolab.models import (
     WorkflowTemplate,
 )
 from autolab.orchestrator import CampaignRun, Orchestrator
+
+#: Callback fired after every workflow step.  Receives the step result
+#: and returns an Action (or ``None`` to continue).
+StepHook = Callable[["StepResult"], Action | None | Awaitable[Action | None]]
 
 
 @dataclass
@@ -95,6 +115,12 @@ class WorkflowResult:
     steps: list[StepResult] = field(default_factory=list)
     skipped_step_ids: list[str] = field(default_factory=list)
     completed: bool = False
+    stopped: bool = False
+    stop_reason: str | None = None
+    #: Actions the hook returned that the engine cannot handle itself
+    #: (``add_step``, ``escalate``, ``replan``).  The caller (CampaignRunner)
+    #: reads these and applies them after the workflow returns.
+    deferred_actions: list[tuple[str, Action]] = field(default_factory=list)
 
     def get(self, step_id: str) -> StepResult | None:
         return next((s for s in self.steps if s.step_id == step_id), None)
@@ -124,6 +150,8 @@ class WorkflowEngine:
         acceptance: AcceptanceCriteria | None = None,
         upstream_sample: Sample | None = None,
         max_parallel: int | None = None,
+        step_hook: StepHook | None = None,
+        max_step_retries: int = 2,
     ) -> WorkflowResult:
         """Execute all steps in topological order.
 
@@ -143,6 +171,16 @@ class WorkflowEngine:
             The starting Sample, if the first step(s) require one.
         max_parallel:
             Cap concurrent steps. ``None`` = no cap beyond resources.
+        step_hook:
+            Optional callback fired after each step completes (or fails).
+            Receives a :class:`StepResult` and returns an
+            :class:`~autolab.models.Action` or ``None``.  The engine
+            handles ``retry_step``, ``stop``, and ``continue``/``accept``
+            directly; ``add_step``, ``escalate``, and ``replan`` are
+            surfaced in ``WorkflowResult.deferred_actions`` for the
+            caller.
+        max_step_retries:
+            Maximum retries per step when the hook returns ``retry_step``.
         """
         overrides = input_overrides or {}
         order = _topological_sort(template.steps)
@@ -154,10 +192,43 @@ class WorkflowEngine:
         step_sample: dict[str, Sample | None] = {}
         # Steps that failed — their dependants are skipped.
         failed_steps: set[str] = set()
+        # Track retries per step_id.
+        retry_counts: dict[str, int] = {}
+        # If True, the hook asked to stop.
+        stop_requested = False
 
         sem = asyncio.Semaphore(max_parallel) if max_parallel else None
 
+        async def _invoke_hook(sr: StepResult) -> Action | None:
+            if step_hook is None:
+                return None
+            rv = step_hook(sr)
+            if asyncio.iscoroutine(rv) or asyncio.isfuture(rv):
+                return await rv  # type: ignore[arg-type]
+            return rv  # type: ignore[return-value]
+
+        async def _execute_step(
+            step: WorkflowStep, proposed: ProposedStep, gate_criteria: AcceptanceCriteria | None,
+            parent_samples: list[Sample],
+        ) -> tuple[Record, GateVerdict]:
+            if sem:
+                async with sem:
+                    return await self.orchestrator.run_step(
+                        proposed, run,
+                        acceptance=gate_criteria,
+                        upstream_samples=parent_samples or None,
+                    )
+            return await self.orchestrator.run_step(
+                proposed, run,
+                acceptance=gate_criteria,
+                upstream_samples=parent_samples or None,
+            )
+
         async def run_step(step: WorkflowStep) -> None:
+            nonlocal stop_requested
+            if stop_requested:
+                return
+
             # Collect upstream samples from depends_on chain.
             parent_samples: list[Sample] = []
             for dep_id in step.depends_on:
@@ -191,23 +262,47 @@ class WorkflowEngine:
 
             gate_criteria = step.acceptance or acceptance
 
-            if sem:
-                async with sem:
-                    rec, gate = await self.orchestrator.run_step(
-                        proposed,
-                        run,
-                        acceptance=gate_criteria,
-                        upstream_samples=parent_samples or None,
-                    )
-            else:
-                rec, gate = await self.orchestrator.run_step(
-                    proposed,
-                    run,
-                    acceptance=gate_criteria,
-                    upstream_samples=parent_samples or None,
-                )
+            # --- Execute + react loop (retries handled here) ---
+            while True:
+                rec, gate = await _execute_step(step, proposed, gate_criteria, parent_samples)
+                sr = StepResult(step_id=step.step_id, record=rec, gate=gate)
 
-            sr = StepResult(step_id=step.step_id, record=rec, gate=gate)
+                action = await _invoke_hook(sr)
+
+                if action is not None and action.type is ActionType.RETRY_STEP:
+                    count = retry_counts.get(step.step_id, 0)
+                    if count < max_step_retries:
+                        retry_counts[step.step_id] = count + 1
+                        # Update the proposed step to note the retry.
+                        proposed = proposed.model_copy(
+                            update={
+                                "id": f"prop-retry-{step.step_id}-{count + 1}",
+                                "decision": {
+                                    **proposed.decision,
+                                    "retry_of": rec.id,
+                                    "retry_count": count + 1,
+                                    "reason": action.reason,
+                                },
+                                "source_record_ids": [rec.id],
+                            }
+                        )
+                        continue  # re-run the step
+                    # Exhausted retries — fall through as a failure.
+
+                if action is not None and action.type is ActionType.STOP:
+                    stop_requested = True
+                    result.stopped = True
+                    result.stop_reason = action.reason
+
+                # Surface actions the engine can't handle directly.
+                if action is not None and action.type in (
+                    ActionType.ADD_STEP, ActionType.ESCALATE, ActionType.REPLAN,
+                ):
+                    result.deferred_actions.append((step.step_id, action))
+
+                break  # done with this step (no more retries)
+
+            # Record the final result for this step.
             done[step.step_id] = sr
             result.steps.append(sr)
 
@@ -231,6 +326,13 @@ class WorkflowEngine:
 
         # Walk in topological order, launching batches of ready steps.
         for batch in order:
+            if stop_requested:
+                # Mark remaining steps as skipped.
+                for step_id in batch:
+                    if step_id not in done:
+                        result.skipped_step_ids.append(step_id)
+                continue
+
             # Skip steps whose dependencies failed.
             runnable = []
             for step_id in batch:
@@ -244,8 +346,10 @@ class WorkflowEngine:
             if runnable:
                 await asyncio.gather(*[run_step(s) for s in runnable])
 
-        result.completed = len(result.skipped_step_ids) == 0 and all(
-            sr.record.record_status == "completed" for sr in result.steps
+        result.completed = (
+            not result.stopped
+            and len(result.skipped_step_ids) == 0
+            and all(sr.record.record_status == "completed" for sr in result.steps)
         )
         return result
 
@@ -285,4 +389,4 @@ def _topological_sort(steps: list[WorkflowStep]) -> list[list[str]]:
     return batches
 
 
-__all__ = ["StepResult", "WorkflowEngine", "WorkflowResult"]
+__all__ = ["StepHook", "StepResult", "WorkflowEngine", "WorkflowResult"]

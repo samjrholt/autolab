@@ -59,7 +59,7 @@ from autolab.planners.base import (
     PolicyProvider,
 )
 from autolab.scheduler import CampaignScheduler, CampaignState, CampaignStatus
-from autolab.workflow import StepResult, WorkflowEngine, WorkflowResult
+from autolab.workflow import StepHook, StepResult, WorkflowEngine, WorkflowResult
 
 __version__ = "0.0.1"
 
@@ -118,6 +118,7 @@ __all__ = [
     "Operation",
     "OperationContext",
     # Workflow
+    "StepHook",
     "StepResult",
     "WorkflowEngine",
     "WorkflowResult",

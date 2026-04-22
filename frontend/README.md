@@ -1,19 +1,30 @@
 # frontend — autolab Campaign Console
 
-A React + Vite + Tailwind single-page app that consumes the Lab's REST + WebSocket API and renders the two-panel console.
+A Vite + React frontend for the autolab Console. The source of truth now lives here; production assets are built into `src/autolab/server/static/` and served by the FastAPI app.
 
-## Panels (locked — see CLAUDE.md)
+## Direction
 
-- **Left — resource-lane Gantt.** One horizontal lane per Resource instance. Operations are pills that fill their lane while running. Colour-coded by status (`pending`, `running`, `completed`, `failed`, `proposed`).
-- **Right — plan tree.** Campaign → Experiments → Operations. Pill status matches the Gantt. Unchosen proposed Operations remain in the tree as breadcrumbs.
-- **Below — live physics cards.** Appear when a relevant Operation completes: rendered hysteresis loops, PXRD patterns, 3-D structure viewers, streaming Hc estimates.
-- **Intervention box.** Free-text input; each submission `POST`s to `/campaigns/{id}/intervene` and lands as a hashed Record.
-- **Ledger panel.** Append-only feed of Records with checksum + status badges. Read-only.
+The Console is no longer treated like an internal science dashboard. The current implementation biases toward:
 
-## Status
+- **Editorial luxury** — serif-led headlines, warm metallic accents, deliberate whitespace.
+- **Futurist product feel** — glass surfaces, motion in the resource lanes, live signal spotlighting.
+- **Progressive disclosure** — orchestration, plan mutation, campaign design, intervention, and ledger inspection without putting every control on the main canvas at once.
 
-Not scaffolded yet. Target: hackathon day-2 / day-3 window.
+## Current surfaces
+
+- **Hero stage** — active campaign framing and high-level lab state.
+- **Resource motion** — the shared-resource lanes remain visible because they are a core demo beat.
+- **Adaptive plan** — live campaign and experiment progression.
+- **Signal spotlight** — latest completed result promoted into a visual anchor.
+- **Intent launch** — free-text campaign design and approval.
+- **Intervention + ledger** — secondary, but still accessible and provenance-visible.
 
 ## Tooling
 
-This directory is **outside pixi's Python environment**. It has its own `package.json` and is managed by plain npm / pnpm. The Python Lab serves the built bundle from `src/autolab/server/static/` in production; in development the Vite dev server proxies WebSocket + REST traffic to `:8000`.
+The frontend is managed through pixi from the repo root:
+
+- `pixi run frontend-install`
+- `pixi run frontend-dev` — Vite dev server with API + WebSocket proxy to `http://localhost:8000`
+- `pixi run frontend-build` — emits the production bundle into `src/autolab/server/static/`
+
+If you prefer to work directly inside `frontend/`, `npm install`, `npm run dev`, and `npm run build` still work. The Python server continues to serve the already-built bundle.

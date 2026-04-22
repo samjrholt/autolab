@@ -1,0 +1,175 @@
+@import "tailwindcss";
+
+/* ── Design tokens ──────────────────────────────────────────── */
+
+@theme {
+  --color-bg: #050505;
+  --color-surface: #0d0d0d;
+  --color-line: rgba(255, 255, 255, 0.06);
+  --color-line-hover: rgba(255, 255, 255, 0.12);
+  --color-text: #ffffff;
+  --color-secondary: #888888;
+  --color-tertiary: #444444;
+  --color-accent-glow: rgba(100, 149, 237, 0.08);
+  --color-accent-glow-strong: rgba(100, 149, 237, 0.14);
+  --color-status-green: #22c55e;
+  --color-status-red: #ef4444;
+  --color-status-amber: #f59e0b;
+
+  --font-serif: "Instrument Serif", serif;
+  --font-sans: "Manrope", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", monospace;
+}
+
+/* ── Globals ────────────────────────────────────────────────── */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  min-height: 100vh;
+}
+
+body {
+  margin: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+pre {
+  margin: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--color-secondary);
+}
+
+/* ── Scrollbar (subtle) ─────────────────────────────────────── */
+
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.08);
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+
+/* ── Glow utility ───────────────────────────────────────────── */
+
+.glow-hero {
+  background: radial-gradient(
+    ellipse 600px 300px at 50% 0%,
+    var(--color-accent-glow-strong),
+    transparent
+  );
+}
+
+.glow-card {
+  background: radial-gradient(
+    ellipse 300px 200px at 50% 50%,
+    var(--color-accent-glow),
+    transparent
+  );
+}
+
+/* ── Status dot ─────────────────────────────────────────────── */
+
+.status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 9999px;
+  flex-shrink: 0;
+}
+
+.status-dot--green {
+  background: var(--color-status-green);
+}
+
+.status-dot--red {
+  background: var(--color-status-red);
+}
+
+.status-dot--amber {
+  background: var(--color-status-amber);
+}
+
+.status-dot--idle {
+  background: var(--color-tertiary);
+}
+
+.status-dot--pulse {
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.4;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+/* ── Chart line draw ────────────────────────────────────────── */
+
+.chart-line {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.7);
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+/* ── Slide-over backdrop ────────────────────────────────────── */
+
+.slide-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(8px);
+  z-index: 40;
+}
+
+.slide-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 50;
+  overflow-y: auto;
+  background: var(--color-bg);
+  border-left: 1px solid var(--color-line);
+}

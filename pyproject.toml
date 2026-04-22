@@ -56,6 +56,8 @@ dependencies = [
     # Claude + MCP
     "anthropic>=0.40",
     "mcp>=1.0",
+    # Env file loading
+    "python-dotenv>=1.0",
 ]
 
 [project.optional-dependencies]
@@ -91,6 +93,7 @@ include = [
     "src/autolab",
     "tests",
     "docs",
+    "frontend",
     "README.md",
     "LICENSE",
     "pyproject.toml",

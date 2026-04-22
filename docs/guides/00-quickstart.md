@@ -11,10 +11,15 @@ Python 3.12 environment and the editable `autolab` package:
 pixi install
 ```
 
-No Node tooling is required. The Console is a single HTML file the server
-renders straight from `src/autolab/server/static/index.html`; it pulls
-React and Tailwind from public CDNs. You can swap in a Vite build later
-without changing the server contract.
+pixi also manages the frontend toolchain. If you want the latest Console
+bundle from source, build it before serving:
+
+```bash
+pixi run frontend-build
+```
+
+For frontend development, use `pixi run frontend-install` once and then
+`pixi run frontend-dev`.
 
 ## 2. Boot the Lab
 
@@ -38,9 +43,9 @@ set `AUTOLAB_BOOTSTRAP=my_package.my_module:my_bootstrap_fn`.
 ## 3. Open the Console
 
 Open `http://localhost:8000/` in a browser. You should see four rows of
-panels — **Gantt + Plan tree**, **Ledger feed + Event stream**,
-**Campaigns + Designer + Intervention**, **Add resource + Duration
-estimates**.
+surfaces — **hero stage + campaign composer**, **resource motion + adaptive
+plan**, **live result spotlight + campaign rail**, and the **ledger drawer**
+for raw provenance inspection.
 
 The top-right badges show Claude's status (*configured* if
 `ANTHROPIC_API_KEY` is set, otherwise *offline stub*) and the live WS

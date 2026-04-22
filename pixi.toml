@@ -10,6 +10,7 @@ platforms = ["win-64", "linux-64", "osx-arm64"]
 [dependencies]
 python = "3.12.*"
 pip = ">=24.0"
+nodejs = ">=22,<23"
 
 # The package itself, installed editable with dev extras. Pulls in
 # runtime deps (FastAPI, pydantic, SQLAlchemy, anthropic, mcp, …) and
@@ -33,10 +34,16 @@ serve-prod = "uvicorn autolab.server.app:app --host 0.0.0.0 --port 8000"
 test = "pytest"
 test-cov = "pytest --cov=autolab --cov-report=term-missing --cov-report=html"
 
+# Frontend workflow. The source lives in frontend/ and builds into
+# src/autolab/server/static/ for FastAPI to serve.
+frontend-install = { cmd = "npm install", cwd = "frontend" }
+frontend-dev = { cmd = "npm run dev", cwd = "frontend" }
+frontend-build = { cmd = "npm run build", cwd = "frontend" }
+
 # Static analysis.
 lint = { cmd = "ruff check src tests && ruff format --check src tests" }
 format = "ruff format src tests"
 typecheck = "mypy src/autolab"
 
 # One shot: run everything CI runs.
-check = { depends-on = ["lint", "typecheck", "test"] }
+check = { depends-on = ["lint", "typecheck", "test", "frontend-build"] }

@@ -2,16 +2,16 @@
 
 **An autonomous lab with provenance as its foundation.**
 
-autolab is a closed-loop, resource-aware framework for autonomous science. A long-running Lab service orchestrates experimental or computational workflows: an agent (Claude Opus 4.7) proposes and reacts, a typed pool of Resources executes, and every step — including the agent's reasoning and every failed or off-target attempt — lands as an append-only hashed Record. Adaptive mid-experiment replanning, live scheduler visualisation, real multiscale physics, and first-class capture of scientific intuition are core.
+autolab is a closed-loop, resource-aware framework for autonomous science. A long-running Lab service orchestrates experimental and computational workflows: an agent (Claude Opus 4.7) proposes and reacts, a typed pool of Resources executes, and every step — including the agent's reasoning and every failed or off-target attempt — lands as an append-only hashed Record. Adaptive mid-workflow replanning, live scheduler visualisation, and first-class provenance are core.
 
-> **Status — alpha.** Core framework, FastAPI + WebSocket service, live Campaign Console, Claude Opus 4.7 Planner / PolicyProvider / free-text Campaign Designer, per-operation duration learning, and the Ledger-native MLflow-style query DSL are all in place. 114 tests pass. Design contract lives in [docs/design/](docs/design/); task-shaped how-tos in [docs/guides/](docs/guides/).
+> **Status — alpha.** Core framework, FastAPI + WebSocket service, live Campaign Console, Claude Opus 4.7 Planner / PolicyProvider / free-text Campaign Designer, per-operation duration learning, and the Ledger-native MLflow-style query DSL are all in place. 119 tests pass. The framework scope is experimental + computational science; the current hackathon demo path is computational-only. Design contract lives in [docs/design/](docs/design/); task-shaped how-tos in [docs/guides/](docs/guides/).
 
 ## What it is
 
 Three layers to anyone outside the project:
 
 1. **Brain** — Claude Opus 4.7 as Planner and PolicyProvider, reading records and rendered figures and deciding what to do next.
-2. **Hands** — Capability-named tools behind one MCP gateway, including *Interpretation Operations* that call Claude to read a figure and return a structured Claim. Simulation today, real instruments tomorrow.
+2. **Hands** — Capability-named tools and operations that execute scientific work on typed resources. Simulation and computation are the current demo path; the same interfaces are intended to support instrument-backed operations too.
 3. **Ledger** — An append-only, hashed, replayable scientific record with tags and free-text annotations on every entry. The substrate that makes the autonomy trustworthy and the evidence compound across campaigns.
 
 Five layers under the hood: Interface, Orchestration, Expertise, Tools (MCP gateway + capability-named registry, Interpretation Operations included), Provenance.
@@ -20,14 +20,23 @@ Five layers under the hood: Interface, Orchestration, Expertise, Tools (MCP gate
 
 ```bash
 pixi install           # set up the Python 3.12 environment
+pixi run frontend-build # build the Console bundle into src/autolab/server/static/
 pixi run serve         # boot uvicorn on :8000 — FastAPI + WebSocket + Console
 ```
 
 Open `http://localhost:8000/` for the live Campaign Console — resource-lane
-Gantt, plan tree, streaming ledger feed with SHA-256 checksums, Claude-driven
-free-text Campaign Designer, and a form to register new Resources. See
+orchestration, adaptive plan view, live result spotlight, Claude-driven
+free-text Campaign Designer, intervention flow, and provenance drawer. See
 [docs/guides/00-quickstart.md](docs/guides/00-quickstart.md) for the five-minute
 tour.
+
+For frontend work, pixi also manages the Node toolchain:
+
+```bash
+pixi run frontend-install  # install npm dependencies in frontend/
+pixi run frontend-dev      # run the Vite dev server on :5173
+pixi run frontend-build    # emit the production bundle for FastAPI
+```
 
 ### HTTP surface (partial)
 
@@ -78,8 +87,6 @@ reports any drift from the stored checksum.
 ### Still planned
 
 - Re-execution-style replay (running cached Operation outputs), not just checksum replay.
-- Vite/Tailwind frontend build pipeline (the Console is a single
-  build-step-free HTML file today).
 - LabIMotion-style Segments (typed metadata blocks attachable to Records).
 
 ## Repo layout
@@ -91,7 +98,7 @@ reports any drift from the stored checksum.
 | [`docs/design/`](docs/design/) | Design synthesis, glossary, scenarios, thesis. |
 | [`docs/architecture/`](docs/architecture/) | Concrete architecture docs (as written). |
 | [`docs/examples/`](docs/examples/) | Documented example workflows. |
-| [`frontend/`](frontend/) | React + Vite + Tailwind Campaign Console (to be scaffolded). |
+| [`frontend/`](frontend/) | React + Vite Campaign Console source, built via pixi tasks. |
 | [`CLAUDE.md`](CLAUDE.md) | Guidance for Claude Code working in this repo. |
 | [`pyproject.toml`](pyproject.toml) | Python package metadata + lint / type / test config. |
 | [`pixi.toml`](pixi.toml) | Environment + task manifest. |

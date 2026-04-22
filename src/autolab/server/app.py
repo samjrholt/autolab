@@ -22,8 +22,9 @@ Design
 - REST handlers mutate the Lab through its own methods; they never
   touch the ledger directly.  This keeps the "Operations never write
   Records" invariant intact.
-- The Console is a single ``index.html`` served at ``/``.  It pulls
-  React + Tailwind from CDNs; the server has no build step.
+- The Console is a built frontend bundle served at ``/`` from
+    ``src/autolab/server/static``. The source lives in ``frontend/`` and
+    can be rebuilt without changing the FastAPI contract.
 
 Persistence
 -----------
@@ -394,6 +395,9 @@ async def _event_bridge(events: EventBus, ws_manager: ConnectionManager) -> None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from dotenv import load_dotenv
+
+    load_dotenv()  # loads .env from cwd if present
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s  %(name)-24s  %(message)s",

@@ -85,7 +85,7 @@ from autolab.planners.base import Planner
 from autolab.provenance.store import Ledger
 from autolab.resources.manager import ResourceManager
 from autolab.tools.registry import ToolDeclaration, ToolRegistry
-from autolab.workflow import WorkflowEngine, WorkflowResult
+from autolab.workflow import StepHook, WorkflowEngine, WorkflowResult
 
 
 def _capture_environment(extra_packages: Iterable[str] = ()) -> EnvironmentSnapshot:
@@ -222,12 +222,15 @@ class Lab:
         input_overrides: dict[str, dict[str, Any]] | None = None,
         upstream_sample: Any = None,
         max_parallel: int | None = None,
+        step_hook: StepHook | None = None,
+        max_step_retries: int = 2,
     ) -> WorkflowResult:
-        """Execute a registered WorkflowTemplate directly.
+        """Execute a registered WorkflowTemplate.
 
-        Useful when the workflow sequence is fully determined and you don't
-        need the Planner's adaptive loop — e.g. running a fixed synthesis
-        route for every candidate in a batch.
+        Pass ``step_hook`` to let a Planner react after each step in the
+        DAG — e.g. retry a failed sub-step, stop early, or escalate.
+        Without a hook, behaviour is unchanged (failed steps skip their
+        dependants silently).
         """
         template = (
             self.get_workflow(name_or_template)
@@ -240,6 +243,8 @@ class Lab:
             input_overrides=input_overrides,
             upstream_sample=upstream_sample,
             max_parallel=max_parallel,
+            step_hook=step_hook,
+            max_step_retries=max_step_retries,
         )
 
     # ------------------------------------------------------------------
