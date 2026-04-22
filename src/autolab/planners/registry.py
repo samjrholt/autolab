@@ -59,20 +59,16 @@ def build(name: str, config: Mapping[str, Any]) -> Planner:
 # ---------------------------------------------------------------------------
 
 
-def _bo_factory(config: Mapping[str, Any]) -> Planner:
-    from autolab.planners.bo import BOConfig, BOPlanner
-
-    return BOPlanner(BOConfig(**config))
-
-
 def _optuna_factory(config: Mapping[str, Any]) -> Planner:
     from autolab.planners.optuna import OptunaConfig, OptunaPlanner
 
     return OptunaPlanner(OptunaConfig(**config))
 
 
-register_planner("bo", _bo_factory)
 register_planner("optuna", _optuna_factory)
+# "bo" is an alias to Optuna with the GP sampler (Gaussian Process EI).
+# Use "optuna" directly with sampler="gp" for explicit control.
+register_planner("bo", lambda cfg: _optuna_factory({"sampler": "gp", **cfg}))
 
 
 __all__ = [

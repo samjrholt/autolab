@@ -3,6 +3,8 @@ import PageHeader from "../shell/PageHeader";
 import { postJson } from "../lib/api";
 import WorkflowCanvasEditor from "./designer/workflow/WorkflowCanvasEditor";
 import NewCapabilityInline from "./designer/workflow/NewCapabilityInline";
+import ResourceForm from "./designer/ResourceForm";
+import CapabilityForm from "./designer/CapabilityForm";
 
 /**
  * Claude-assisted designer for a single kind of entity.
@@ -32,23 +34,25 @@ const KINDS = {
     label: "Resource",
     title: "Register resource",
     description:
-      "Describe a piece of equipment, a compute host, or a simulator. Claude drafts a Resource declaration.",
-    placeholder: "A WSL host named wsl-dev with 8 cores and an A100 GPU, used for magnetic simulations…",
+      "Connection info lives here — a Resource IS the connection (SSH host, local subprocess, SLURM partition, MCP endpoint). Register manually for SSH/WSL, or let Claude draft from a description.",
+    placeholder: "A WSL Ubuntu instance named wsl-dev on my laptop, 8 cores, A100 GPU, used for magnetic simulations…",
     designEndpoint: "/resources/design",
     applyEndpoint: "/resources",
     extractProposal: (r) => r.resource,
     buildApplyBody: (r) => r,
+    supportsForm: true,
   },
   capability: {
     label: "Capability",
     title: "Add capability",
     description:
-      "Describe something the lab should be able to do — a script, an MCP tool, an instrument routine.",
+      "What the lab can do — a script, an instrument routine, an MCP tool. Register manually for simple cases (no API key needed), or let Claude draft from a description.",
     placeholder: "A Python script at ~/code/my-sim I run with pixi run simulate that takes a config.yaml and writes results/loop.png…",
     designEndpoint: "/tools/design",
     applyEndpoint: "/tools/register-yaml",
     extractProposal: (r) => r.tool,
     buildApplyBody: (t) => t,
+    supportsForm: true,
   },
 };
 
@@ -288,12 +292,13 @@ export default function DesignerPage({ kind, status, refresh, onDone, initial })
   const config = KINDS[kind];
   if (!config) return null;
 
-  // For workflows, default to Build when we have any capabilities registered
-  // or an initial template to edit — scientists mostly prefer the visual surface.
+  // Workflows: default to Build when caps or initial exist.
+  // Resources/Capabilities: default to "form" (no API key needed).
   const hasTools = (status?.tools || []).length > 0;
-  const [mode, setMode] = useState(
-    config.supportsCanvas && (initial || hasTools) ? "build" : "describe",
-  );
+  const defaultMode = config.supportsCanvas && (initial || hasTools) ? "build"
+    : config.supportsForm ? "form"
+    : "describe";
+  const [mode, setMode] = useState(defaultMode);
   const [registered, setRegistered] = useState(false);
 
   return (
@@ -310,28 +315,53 @@ export default function DesignerPage({ kind, status, refresh, onDone, initial })
         }
       />
 
-      {config.supportsCanvas ? (
-        <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+      <div style={{ display: "flex", gap: 4, marginBottom: 12 }}>
+        {config.supportsForm ? (
+          <button
+            type="button"
+            className={mode === "form" ? "btn-secondary" : "btn-ghost"}
+            onClick={() => setMode("form")}
+            style={{ fontSize: 12 }}
+          >
+            Register manually
+          </button>
+        ) : null}
+        {config.supportsCanvas ? (
+          <>
+            <button
+              type="button"
+              className={mode === "describe" ? "btn-secondary" : "btn-ghost"}
+              onClick={() => setMode("describe")}
+              style={{ fontSize: 12 }}
+            >
+              Describe
+            </button>
+            <button
+              type="button"
+              className={mode === "build" ? "btn-secondary" : "btn-ghost"}
+              onClick={() => setMode("build")}
+              style={{ fontSize: 12 }}
+            >
+              Build
+            </button>
+          </>
+        ) : (
           <button
             type="button"
             className={mode === "describe" ? "btn-secondary" : "btn-ghost"}
             onClick={() => setMode("describe")}
             style={{ fontSize: 12 }}
           >
-            Describe
+            Describe with Claude
           </button>
-          <button
-            type="button"
-            className={mode === "build" ? "btn-secondary" : "btn-ghost"}
-            onClick={() => setMode("build")}
-            style={{ fontSize: 12 }}
-          >
-            Build
-          </button>
-        </div>
-      ) : null}
+        )}
+      </div>
 
-      {config.supportsCanvas && mode === "build" ? (
+      {mode === "form" && kind === "resource" ? (
+        <ResourceForm onDone={onDone} refresh={refresh} />
+      ) : mode === "form" && kind === "capability" ? (
+        <CapabilityForm onDone={onDone} refresh={refresh} />
+      ) : config.supportsCanvas && mode === "build" ? (
         <BuildMode status={status} refresh={refresh} onDone={onDone} initial={initial} />
       ) : (
         <DescribeMode

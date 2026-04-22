@@ -58,6 +58,15 @@ pixi run frontend-build    # emit the production bundle for FastAPI
 | `GET`  | `/samples/{id}/history` | Sample lineage + every Record that touched a Sample. |
 | `GET`  | `/export/ro-crate` | RO-Crate 1.1 JSON-LD export (ELN Consortium interop). |
 | `GET`  | `/export/prov` | W3C PROV-O shaped JSON export. |
+| `POST` | `/lab/setup` | Claude proposes resources + operations from a plain-language lab description. |
+| `POST` | `/lab/setup/apply` | Register the reviewed setup proposal. |
+| `POST` | `/resources/design` | Claude proposes a single Resource from a description. |
+| `POST` | `/tools/design` | Claude proposes a single Tool declaration from a description. |
+| `POST` | `/workflows/design` | Claude proposes a WorkflowTemplate from a description. |
+| `POST` | `/campaigns/{id}/pause` | Pause a running Campaign. |
+| `POST` | `/campaigns/{id}/resume` | Resume a paused Campaign. |
+| `POST` | `/campaigns/{id}/cancel` | Cancel a Campaign. |
+| `POST` | `/campaigns/{id}/intervene` | Record a human intervention as a hashed Record. |
 
 ### CLI
 
@@ -77,10 +86,11 @@ reports any drift from the stored checksum.
 
 | Mode | Registers |
 |---|---|
-| `superellipse` (default) | `superellipse_hysteresis` capability + `pc-1` computer Resource. |
+| `demo_quadratic` (default) | Trivial stub Operation + `pc-1` computer Resource. Good for clicking around with no external deps. |
+| `superellipse` | `superellipse_hysteresis` capability + `pc-1` computer Resource. Real-physics surrogate. |
 | `mammos` | All 6 MaMMoS Operations + `mammos_sensor` WorkflowTemplate + `vm-primary` VM Resource. |
-| `all` | Both of the above. |
-| `demo_quadratic` | Trivial stub Operation (no domain viz). |
+| `all` | Both `superellipse` and `mammos` bundles. |
+| `shell_command` | `shell_command` capability + `local-worker` Resource. Full round-trip with a local subprocess backend. |
 | `none` | Empty Lab — register resources/tools via REST. |
 | `module:fn` | Dotted path to a user-supplied `bootstrap(lab)` function. |
 

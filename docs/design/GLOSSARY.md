@@ -12,7 +12,7 @@ If you feel the need for a new term, first check this file. If it isn't here and
 The long-running FastAPI service that owns shared resources, registered tools, registered workflows, campaigns, and the ledger. One Lab instance corresponds to one physical or institutional setting (e.g. "Sam's desk," "Max Planck magnetics suite"). Restart-safe; rehydrates from the ledger.
 
 **Campaign**
-A goal-directed search inside a Lab, owning a planner, a budget, a set of constraints, and a stream of experiments. Examples: *maximise room-temperature coercivity of Fe-Co-Mn within 80 furnace hours*, *find the L1₀-ordering temperature window*. Campaigns have a Merkle root.
+A goal-directed search inside a Lab, owning a planner, a budget, a set of constraints, and a stream of experiments. Examples: *maximise room-temperature coercivity of Fe-Co-Mn within 80 furnace hours*, *find the L1₀-ordering temperature window*.
 
 **Experiment**
 One attempt inside a campaign — the unit grouped by `group_id` and the unit that produces one dataset row once characterisation is complete. An experiment may span many operations and branch.
@@ -64,7 +64,7 @@ SHA-256 of a Record's canonical serialisation. Verifiable on read.
 An optional per-Campaign root hash over the Campaign's Record chain. Useful as plumbing (one fixed-size handle for a whole Campaign's integrity state), but **not pitched as a feature** — the cross-lab mergeability story was dropped during the 2026-04-21 ideation pass because practising scientists do not care about cryptographic dataset merge. Per-Record SHA-256 is the integrity primitive that matters day to day.
 
 **Replay**
-Byte-for-byte reproduction of a campaign against cached tool outputs. Exposed as `autolab replay <campaign-hash>`. What turns "we logged everything" into "we are reproducible."
+Byte-for-byte integrity audit of a campaign: for each Record, recompute the SHA-256 of its canonical payload and compare against the stored checksum. Exposed as `autolab replay --root <dir> --campaign <id>`. What turns "we logged everything" into "we are reproducible." Re-execution against cached tool outputs is v2.
 
 ---
 

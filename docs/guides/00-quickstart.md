@@ -42,24 +42,33 @@ set `AUTOLAB_BOOTSTRAP=my_package.my_module:my_bootstrap_fn`.
 
 ## 3. Open the Console
 
-Open `http://localhost:8000/` in a browser. You should see four rows of
-surfaces — **hero stage + campaign composer**, **resource motion + adaptive
-plan**, **live result spotlight + campaign rail**, and the **ledger drawer**
-for raw provenance inspection.
+Open `http://localhost:8000/` in a browser. The Console is a sidebar-nav
+single-page app. The left sidebar has five sections:
 
-The top-right badges show Claude's status (*configured* if
-`ANTHROPIC_API_KEY` is set, otherwise *offline stub*) and the live WS
-connection state.
+- **Campaigns** — list and inspect goal-directed runs; create new ones.
+- **Library** — Resources, Capabilities, and Workflows registered against
+  this Lab.
+- **Ledger** — queryable feed of every Record with SHA-256 checksums.
+- **Setup → Assistant** — Claude-driven onboarding: describe your lab in
+  plain language and review the proposed resources and operations.
+- **Settings** — Lab metadata and connection status.
+
+The top bar shows breadcrumbs and a WebSocket connection badge. A yellow
+`claude: offline stub` badge means no `ANTHROPIC_API_KEY` is set; the
+designer and Planner policy will return scripted responses.
 
 ## 4. Run a campaign
 
-From the Console: paste a sentence into the **Design campaign from free
-text** box and click *Design campaign*. Claude (or the offline stub)
-returns a draft `Campaign`. Review it, then click *Approve & submit*.
+From **Campaigns**, click **+ New campaign**. A slide-over opens with a
+free-text field — paste a sentence like *"Maximise the score of the demo
+quadratic tool; stop at score ≥ 0.9"* and click **Design**. Claude (or
+the offline stub) proposes a draft Campaign. Review it, then click
+**Approve & submit**.
 
-Watch the **Resources → live Gantt** panel fill with `demo_quadratic`
-pills and the **Ledger feed** stream records with their SHA-256
-checksums.
+Navigate into the new campaign to see the **Resource lanes** (Gantt view
+of Operations filling resource slots), the **Plan tree** (Campaign →
+Operations), and a **Ledger feed** streaming records with their SHA-256
+checksums as steps complete.
 
 ## 5. Verify replayability
 

@@ -5,23 +5,22 @@ Campaigns use them for the *deterministic* part of an experiment — the
 fixed chain of steps a single candidate runs through. The Planner picks
 the next candidate; the workflow runs it to completion.
 
-## Quickstart from the Console
+## Running from the Console
 
-1. Boot with a bootstrap that registers a workflow. The `mammos`
-   bootstrap registers the full 6-step multiscale demonstrator:
-   ```bash
-   AUTOLAB_BOOTSTRAP=mammos pixi run serve
-   ```
-2. Open the Console. The **Workflow launcher** panel appears once at
-   least one workflow is registered.
-3. Pick a material preset (FeCo / Nd2Fe14B / Sm2Co17 / SmCo5), tune
-   geometry and temperature if desired, click *Run workflow*.
-4. The **Workflow DAG** panel fills in live — nodes turn cyan when
-   running, green when complete, magenta glow arrows show dependency
-   flow.
-5. Each step is a separate hashed Record. Click one in the Ledger feed
-   to see its H/M loop, relaxed structure, Kuzmin curve, or sensor
-   figure-of-merit tile.
+Workflows appear in the **Library → Workflows** section. Boot with a
+bootstrap that registers a workflow, for example:
+
+```bash
+AUTOLAB_BOOTSTRAP=mammos pixi run serve
+```
+
+Open the Console and navigate to **Library → Workflows** to see the
+registered `mammos_sensor` template and inspect its steps. To execute
+it, use the REST API (below) — the Console currently shows the workflow
+definition and step graph but does not have a GUI launcher. Once a run
+is in progress you can navigate to **Campaigns** to watch the plan tree
+and resource lanes fill live, and open any campaign to see physics
+artefact cards as steps complete.
 
 ## From the REST API
 

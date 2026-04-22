@@ -37,11 +37,14 @@ from SQLite.
 Test bootstrap
 --------------
 
-``AUTOLAB_BOOTSTRAP`` env var: ``"demo"`` (default) pre-registers a
-small stub Operation + one computer Resource so the UI has something to
-display immediately; ``"none"`` boots a totally empty Lab; any other
-value is a dotted path ``module:function`` that will be called with the
-Lab as its only argument (for wiring your own demo).
+``AUTOLAB_BOOTSTRAP`` env var (default ``"demo_quadratic"``) selects
+a bootstrap bundle: ``"demo_quadratic"`` (default) pre-registers a
+trivial stub Operation + one computer Resource; ``"superellipse"``
+wires the real-physics superellipse-sensor example; ``"mammos"`` wires
+the full 6-step MaMMoS demonstrator; ``"all"`` registers both; ``"shell_command"``
+registers a local subprocess backend; ``"none"`` boots a totally empty
+Lab; any ``module:function`` dotted path is called with the Lab as its
+only argument.
 """
 
 from __future__ import annotations
@@ -408,6 +411,13 @@ def _bootstrap(lab: Lab) -> None:
     if mode == "shell_command":
         _bootstrap_shell_command(lab)
         return
+    if mode == "add_demo":
+        try:
+            from examples.add_demo.bootstrap import bootstrap as _add_demo_boot
+            _add_demo_boot(lab)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("add_demo bootstrap failed (%s)", exc)
+        return
     # Custom dotted path module:function
     if ":" in mode:
         mod_name, attr = mode.split(":", 1)
@@ -634,8 +644,17 @@ async def list_tools(request: Request) -> list[dict[str, Any]]:
 
 @app.post("/tools/register-yaml")
 async def register_yaml_tool(body: dict[str, Any], request: Request) -> dict[str, Any]:
-    """Register a YAML/JSON tool declaration POSTed as JSON."""
+    """Register a YAML/JSON tool declaration POSTed as JSON.
+
+    ``name`` defaults to ``capability`` if omitted — both fields refer to the
+    same scientist-named identifier; the ToolDeclaration loader requires them.
+    """
     lab = _lab(request)
+    # Normalise: name and capability are the same identifier in our model.
+    if "capability" in body and "name" not in body:
+        body = {**body, "name": body["capability"]}
+    elif "name" in body and "capability" not in body:
+        body = {**body, "capability": body["name"]}
     try:
         decl = lab.register_tool_dict(body)
     except (ValueError, KeyError) as exc:

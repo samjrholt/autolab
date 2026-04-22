@@ -1,7 +1,7 @@
 [project]
 name = "autolab"
 version = "0.0.1"
-description = "A scientific record with an agent attached."
+description = "An autonomous lab with provenance as its foundation."
 authors = ["Sam Holt <samjrholt@gmail.com>"]
 channels = ["conda-forge"]
 platforms = ["win-64", "linux-64", "osx-arm64"]

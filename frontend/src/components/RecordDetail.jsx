@@ -17,8 +17,14 @@ export default function RecordDetail({ record, open, onClose }) {
   useEffect(() => {
     if (!record) { setDetail(null); return; }
     let cancelled = false;
+    // GET /records/{id} returns { record: {...}, history: [...], annotations: [...] }
     getJson(`/records/${record.id}`)
-      .then((d) => { if (!cancelled) setDetail(d); })
+      .then((d) => {
+        if (cancelled) return;
+        // Merge the record with its annotations so the rest of the component
+        // can read data.annotations, data.outputs, etc. without knowing the envelope.
+        setDetail({ ...(d.record || d), annotations: d.annotations || [] });
+      })
       .catch(() => { if (!cancelled) setDetail(null); });
     return () => { cancelled = true; };
   }, [record]);

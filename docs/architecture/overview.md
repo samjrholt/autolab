@@ -60,8 +60,8 @@ SQLite is the index for fast queries.
 
 1. **Only the Orchestrator writes Records.** Operations return a
    result; the Orchestrator wraps it.
-2. **Every Record carries a SHA-256 checksum.** `autolab.ledger.verify_all()`
-   recomputes them.
+2. **Every Record carries a SHA-256 checksum.** `lab.verify_ledger()`
+   recomputes them (also exposed as `GET /verify`).
 3. **Append-only.** Once a Record is `completed|failed|soft_fail` it
    cannot be re-opened. Corrections land as Annotations.
 4. **Write-ahead.** A crash mid-Operation leaves a `pending` or
@@ -124,10 +124,14 @@ Event kinds emitted today:
 
 ## Replayability
 
-`autolab replay <campaign-hash>` (planned CLI entry point) reads the
-ledger's frozen Record inputs + `tool_declaration_hash` + session
-`EnvironmentSnapshot` and re-runs the Operations against their cached
-outputs. The SHA-256 of every replayed Record must match the original.
+`autolab replay --root <dir> --campaign <id>` reads every Record in the
+campaign, re-canonicalises its stored payload, and recomputes the SHA-256
+against the stored checksum. Any drift is printed as a mismatch. This is
+the **integrity-audit** variant of replay — it proves the on-disk ledger
+is byte-stable since write. It does not re-execute Operations (re-execution
+replay against cached outputs is v2).
+
 This is the credibility anchor the competitive landscape doc calls out
 as autolab's differentiator against every ELN, tracker, and prior
-autonomous-lab framework.
+autonomous-lab framework. The command is also exposed as `pixi run autolab
+replay` via the installed CLI entry point.
