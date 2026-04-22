@@ -25,10 +25,10 @@ autolab = { path = ".", editable = true, extras = ["dev"] }
 [tasks]
 # Boot the Lab locally with autoreload. This is the default entry point —
 # the Lab is a long-running service, not a one-shot CLI.
-serve = "uvicorn autolab.server.app:app --reload --port 8000"
+serve = { cmd = "uvicorn autolab.server.app:app --reload --port 8000", env = { PYTHONPATH = "." } }
 
 # Boot the Lab without reload (closer to production mode).
-serve-prod = "uvicorn autolab.server.app:app --host 0.0.0.0 --port 8000"
+serve-prod = { cmd = "uvicorn autolab.server.app:app --host 0.0.0.0 --port 8000", env = { PYTHONPATH = "." } }
 
 # Run the full test suite.
 test = "pytest"

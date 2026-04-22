@@ -377,7 +377,21 @@ def _register_annotation_extract(lab: Lab) -> None:
     lab.orchestrator.add_pre_hook(_inject)
 
 
+def _ensure_repo_on_path() -> None:
+    """Add the repo root to sys.path so that `examples.*` is always importable.
+
+    When the server is launched via `pixi run serve` the working directory is
+    the repo root, but it may not be on sys.path.  Adding it here means
+    AUTOLAB_BOOTSTRAP=add_demo (and any dotted-path bootstrap) works without
+    requiring the caller to set PYTHONPATH manually.
+    """
+    cwd = str(Path.cwd())
+    if cwd not in sys.path:
+        sys.path.insert(0, cwd)
+
+
 def _bootstrap(lab: Lab) -> None:
+    _ensure_repo_on_path()
     mode = os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic")
     # annotation_extract is always available regardless of mode.
     _register_annotation_extract(lab)
