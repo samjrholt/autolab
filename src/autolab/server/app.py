@@ -327,6 +327,32 @@ def _bootstrap_demo_quadratic(lab: Lab) -> None:
         lab.register_operation(DemoQuadratic)
 
 
+def _bootstrap_shell_command(lab: Lab) -> None:
+    """Register the ``shell_command`` Capability + a ``local`` Resource.
+
+    Gives the user a full round-trip — write-ahead record, remote workdir
+    open/run/fetch, record finalisation — without any external deps. The
+    demo Workflow runs ``echo hostname && uname -a`` and collects the
+    stdout into a Record, exercising the same RemoteWorkdir lifecycle a
+    real ssh_exec run would use.
+    """
+    from autolab.models import Resource as _Resource
+    from autolab.tools.adapters.shell_command import ShellCommand
+
+    if not any(r.kind == "local" for r in lab.resources.list()):
+        lab.register_resource(
+            _Resource(
+                name="local-worker",
+                kind="local",
+                capabilities={"backend": "local", "has_shell": True},
+                description="Local subprocess backend — runs any shell_command Operation.",
+                typical_operation_durations={"shell_command": 1},
+            )
+        )
+    if not lab.tools.has("shell_command"):
+        lab.register_operation(ShellCommand)
+
+
 def _register_annotation_extract(lab: Lab) -> None:
     """Register the `annotation_extract` Interpretation Op and wire
     the Lab + ClaudeTransport into its OperationContext via a pre-hook.
@@ -378,6 +404,9 @@ def _bootstrap(lab: Lab) -> None:
         return
     if mode == "demo_quadratic":
         _bootstrap_demo_quadratic(lab)
+        return
+    if mode == "shell_command":
+        _bootstrap_shell_command(lab)
         return
     # Custom dotted path module:function
     if ":" in mode:
