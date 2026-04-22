@@ -10,8 +10,9 @@ import { fadeInUp, stagger } from "../lib/motion";
 
 const PLANNER_OPTIONS = [
   { value: "heuristic", label: "Heuristic", desc: "Simple rule-based planner — good for fixed workflows" },
-  { value: "bo", label: "Bayesian Optimisation", desc: "GP-EI optimiser — best for continuous parameter spaces" },
+  { value: "bo", label: "Bayesian Optimisation", desc: "GP-EI via Optuna — best for continuous parameter spaces" },
   { value: "optuna", label: "Optuna", desc: "Tree-structured Parzen estimator — flexible sampler" },
+  { value: "add_demo_optuna", label: "add_demo (Optuna + workflow chain)", desc: "Chains add_two → add_three; optimises x in [0,10]. Used for the add_demo example." },
   { value: "claude", label: "Claude (LLM)", desc: "Opus 4.7 as planner — adaptive, vision-capable, best for exploratory campaigns" },
 ];
 
@@ -57,7 +58,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [objectiveKey, setObjectiveKey] = useState("");
-  const [direction, setDirection] = useState("maximize");
+  const [direction, setDirection] = useState("maximise");
   const [workflow, setWorkflow] = useState("");
   const [planner, setPlanner] = useState("heuristic");
   const [plannerConfig, setPlannerConfig] = useState({});
@@ -180,16 +181,38 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
     return null;
   };
 
+  const fillAddDemo = () => {
+    setName("find_max_add_demo");
+    setDescription("Maximise x+5 via add_two → add_three chain. x ∈ [0,10], optimal result=15.");
+    setObjectiveKey("result");
+    setDirection("maximise");
+    setPlanner("add_demo_optuna");
+    setPlannerConfig({});
+    setBudget("24");
+    setRules([]);
+  };
+
+  const hasAddDemo = (status?.tools || []).some((t) => t.capability === "add_two");
+
   const manualForm = (
     <div>
+      {hasAddDemo ? (
+        <button
+          type="button"
+          onClick={fillAddDemo}
+          className="w-full mb-4 border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] rounded-lg px-3 py-2 text-[12px] hover:bg-[var(--color-accent-glow)] transition-all"
+        >
+          ⚡ Quick-fill add_demo template
+        </button>
+      ) : null}
       <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Campaign name" className="w-full mb-2 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
       <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="w-full mb-3 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
 
       <div className="flex gap-2 mb-3">
         <input type="text" value={objectiveKey} onChange={(e) => setObjectiveKey(e.target.value)} placeholder="Objective key (e.g. coercivity_kAm)" className="flex-1 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
         <select value={direction} onChange={(e) => setDirection(e.target.value)} className="w-32 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-lg px-2 py-1.5 text-[13px] text-white focus:outline-none">
-          <option value="maximize">Maximize</option>
-          <option value="minimize">Minimize</option>
+          <option value="maximise">Maximise</option>
+          <option value="minimise">Minimise</option>
         </select>
       </div>
 
