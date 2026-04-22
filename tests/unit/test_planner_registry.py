@@ -18,19 +18,23 @@ class TestBuiltinRegistry:
         assert "optuna" in names
 
     def test_build_bo_from_config(self):
-        planner = build(
-            "bo",
-            {
-                "operation": "stub",
-                "parameter_space": {
-                    "x": {"type": "float", "low": 0.0, "high": 1.0},
+        # "bo" is now an alias for Optuna (GP sampler) — we removed the
+        # hand-rolled GP in favour of Optuna's built-in samplers.
+        import warnings
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")  # suppress ExperimentalWarning for GPSampler
+            planner = build(
+                "bo",
+                {
+                    "operation": "stub",
+                    "search_space": {
+                        "x": {"type": "float", "low": 0.0, "high": 1.0},
+                    },
+                    "seed": 1,
                 },
-                "initial_random": 2,
-                "seed": 1,
-            },
-        )
-        assert isinstance(planner, BOPlanner)
-        assert planner.name == "bo"
+            )
+        assert isinstance(planner, OptunaPlanner)
+        assert planner.name == "optuna"  # wrapped planner keeps its own name
 
     def test_build_optuna_from_config(self):
         planner = build(

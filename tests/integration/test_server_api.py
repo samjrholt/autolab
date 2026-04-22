@@ -152,6 +152,13 @@ def test_annotation_endpoint(client):
     r = client.post(f"/records/{rid}/annotate", json={"note": "manual test note"})
     assert r.status_code == 200
     detail = client.get(f"/records/{rid}").json()
+    # Regression: RecordDetail.jsx crashed because the component treated the
+    # envelope {record, history, annotations} as a flat record.
+    assert "record" in detail, f"Expected envelope with 'record' key, got: {list(detail.keys())}"
+    assert "history" in detail
+    assert "annotations" in detail
+    assert "operation" in detail["record"]
+    assert "record_status" in detail["record"]
     assert any(
         a.get("body", {}).get("note") == "manual test note" for a in detail["annotations"]
     )
