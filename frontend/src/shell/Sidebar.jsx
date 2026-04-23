@@ -23,19 +23,7 @@ export default function Sidebar({ route, navigate, labName = "default" }) {
     ["workflows", "resources", "capabilities"].includes(route.page) && route.page === page;
 
   return (
-    <aside
-      style={{
-        width: 240,
-        borderRight: "1px solid var(--color-line-strong)",
-        background: "var(--color-canvas)",
-        padding: "14px 10px",
-        display: "flex",
-        flexDirection: "column",
-        gap: 2,
-        flexShrink: 0,
-        overflowY: "auto",
-      }}
-    >
+    <aside className="app-sidebar">
       <div className="sidebar-header">Lab</div>
       <div
         style={{
@@ -49,35 +37,76 @@ export default function Sidebar({ route, navigate, labName = "default" }) {
           gap: 6,
         }}
       >
-        <span style={{ color: "var(--color-accent)" }}>◆</span>
+        <span style={{ color: "var(--color-accent)" }}>*</span>
         <span>{labName}</span>
-        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-secondary)" }}>▾</span>
+        <span style={{ marginLeft: "auto", fontSize: 10, color: "var(--color-secondary)" }}>v</span>
       </div>
 
-      <SidebarItem label="Campaigns" icon="●" active={is("campaigns") || route.page === "campaign"} onClick={() => navigate({ page: "campaigns" })} />
+      <SidebarItem
+        label="Campaigns"
+        icon="o"
+        active={is("campaigns") || route.page === "campaign"}
+        onClick={() => navigate({ page: "campaigns" })}
+      />
+      <SidebarItem
+        label="Analysis"
+        icon="/"
+        active={is("analysis")}
+        onClick={() => navigate({ page: "analysis" })}
+      />
 
       <SidebarItem
         label="Library"
-        icon={libraryOpen ? "▾" : "▸"}
-        onClick={() => setLibraryOpen((v) => !v)}
+        icon={libraryOpen ? "v" : ">"}
+        onClick={() => setLibraryOpen((value) => !value)}
       />
       {libraryOpen ? (
         <>
-          <SidebarItem label="Workflows" active={isLib("workflows")} onClick={() => navigate({ page: "workflows" })} indent={1} />
-          <SidebarItem label="Resources" active={isLib("resources")} onClick={() => navigate({ page: "resources" })} indent={1} />
-          <SidebarItem label="Capabilities" active={isLib("capabilities")} onClick={() => navigate({ page: "capabilities" })} indent={1} />
+          <SidebarItem
+            label="Workflows"
+            active={isLib("workflows")}
+            onClick={() => navigate({ page: "workflows" })}
+            indent={1}
+          />
+          <SidebarItem
+            label="Resources"
+            active={isLib("resources")}
+            onClick={() => navigate({ page: "resources" })}
+            indent={1}
+          />
+          <SidebarItem
+            label="Capabilities"
+            active={isLib("capabilities")}
+            onClick={() => navigate({ page: "capabilities" })}
+            indent={1}
+          />
         </>
       ) : null}
 
-      <SidebarItem label="Ledger" icon="≡" active={is("ledger")} onClick={() => navigate({ page: "ledger" })} />
+      <SidebarItem
+        label="Ledger"
+        icon="="
+        active={is("ledger")}
+        onClick={() => navigate({ page: "ledger" })}
+      />
 
       <div className="sidebar-header">Setup</div>
-      <SidebarItem label="Assistant" icon="✨" active={is("assistant")} onClick={() => navigate({ page: "assistant" })} />
+      <SidebarItem
+        label="Assistant"
+        icon="+"
+        active={is("assistant")}
+        onClick={() => navigate({ page: "assistant" })}
+      />
 
       <div style={{ flex: 1 }} />
 
       <div className="sidebar-header">Workspace</div>
-      <SidebarItem label="Settings" icon="⚙" active={is("settings")} onClick={() => navigate({ page: "settings" })} />
+      <SidebarItem
+        label="Settings"
+        icon="#"
+        active={is("settings")}
+        onClick={() => navigate({ page: "settings" })}
+      />
     </aside>
   );
 }

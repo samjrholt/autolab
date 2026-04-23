@@ -12,6 +12,7 @@ import CapabilityDetailPage from "./pages/CapabilityDetailPage";
 import WorkflowsPage from "./pages/WorkflowsPage";
 import WorkflowDetailPage from "./pages/WorkflowDetailPage";
 import LedgerPage from "./pages/LedgerPage";
+import AnalysisPage from "./pages/AnalysisPage";
 import SettingsPage from "./pages/SettingsPage";
 import AssistantPage from "./pages/AssistantPage";
 import DesignerPage from "./pages/DesignerPage";
@@ -27,6 +28,7 @@ const CRUMBS = {
   capabilities: ["Library", "Capabilities"],
   workflows: ["Library", "Workflows"],
   ledger: ["Ledger"],
+  analysis: ["Analysis"],
   assistant: ["Setup", "Assistant"],
   settings: ["Settings"],
 };
@@ -202,6 +204,9 @@ export default function App() {
 
     if (route.page === "ledger") {
       return <LedgerPage records={records} onSelectRecord={setSelectedRecord} />;
+    }
+    if (route.page === "analysis") {
+      return <AnalysisPage campaigns={campaigns} records={records} />;
     }
     if (route.page === "assistant") {
       return <AssistantPage status={status} refresh={refresh} />;
