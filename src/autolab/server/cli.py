@@ -27,10 +27,13 @@ def main() -> None:
     )
     parser.add_argument(
         "--bootstrap",
-        default=os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic"),
+        default=os.environ.get("AUTOLAB_BOOTSTRAP", "none"),
         help=(
-            "Bootstrap mode: wsl_demo | wsl_ssh_demo | add_demo | "
-            "demo_quadratic | none | <module>:<func>"
+            "Bootstrap mode. Default is 'none' — the Lab boots empty with "
+            "'this-pc' as the only default Resource. Demo content is "
+            "registered on top via POST /bootstraps/apply. Valid modes: "
+            "none | mammos | demo_quadratic | add_demo | wsl_demo | "
+            "wsl_ssh_demo | superellipse | <module>:<func>"
         ),
     )
     parser.add_argument("--port", type=int, default=8000)

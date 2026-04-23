@@ -146,6 +146,11 @@ class CampaignRequest(BaseModel):
     use_claude_policy: bool = False
     # Optional: an inline workflow to execute deterministically when the planner is "none".
     workflow: dict[str, Any] | None = None
+    # When False, the campaign is registered in "queued" state but no task
+    # is launched. The caller (typically the Console) starts it later via
+    # POST /campaigns/{id}/start. Default True preserves the existing
+    # one-click-submit behaviour.
+    autostart: bool = True
 
 
 class EscalationResolutionRequest(BaseModel):
@@ -418,10 +423,15 @@ def _set_bootstrap_diagnostics(lab: Lab, *, mode: str, error: str | None = None)
 def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
     _set_bootstrap_diagnostics(lab, mode=mode)
     log.info("bootstrap mode: %r  (cwd=%s, sys.path[0]=%s)", mode, Path.cwd(), sys.path[0] if sys.path else "(empty)")
-    # annotation_extract is always available regardless of mode.
-    _register_annotation_extract(lab)
     if mode in ("none", ""):
+        # No default tools, no default workflows. "this-pc" is the only
+        # default resource and is registered by _auto_register_this_pc()
+        # before this function runs. Demos register their own entities
+        # on top via POST /bootstraps/apply — and they do it narrowly, so
+        # they don't pollute the Lab with capabilities they don't use.
         return
+    # No automatic annotation_extract registration. Bootstraps that need it
+    # opt in by calling _register_annotation_extract(lab) from their body.
     if mode == "superellipse":
         try:
             _bootstrap_superellipse(lab)
@@ -438,6 +448,22 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             log.warning("mammos bootstrap failed (%s) — falling back to empty", exc)
             return
+    if mode == "sensor_shape_opt":
+        try:
+            from examples.mammos_sensor.sensor_shape_opt_bootstrap import (
+                bootstrap as _sensor_shape_boot,
+            )
+            _sensor_shape_boot(lab)
+            log.info(
+                "sensor_shape_opt bootstrap OK — tools=%s workflows=%s",
+                [d.capability for d in lab.tools.list()],
+                list(lab._workflows.keys()),
+            )
+        except Exception as exc:  # noqa: BLE001
+            _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
+            import traceback as _tb
+            log.error("sensor_shape_opt bootstrap FAILED — %s\n%s", exc, _tb.format_exc())
+        return
     if mode == "all":
         # Register both example bundles so the Console can run either.
         for name, fn in (("superellipse", _bootstrap_superellipse), ("mammos", _bootstrap_mammos)):
@@ -537,7 +563,7 @@ def _auto_register_this_pc(lab: Lab) -> None:
 def _bootstrap(lab: Lab) -> None:
     _ensure_repo_on_path()
     _auto_register_this_pc(lab)
-    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "mammos")
+    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "none")
     _apply_bootstrap_mode(lab, mode)
 
 
@@ -959,16 +985,42 @@ async def submit_campaign(body: CampaignRequest, request: Request) -> dict[str, 
         claude_policy=body.use_claude_policy,
     )
     await scheduler.submit(campaign, planner, priority=body.priority)
-    # If a scheduler loop is already running, _launch() will pick up the new state
-    # on the next tick. But if the user just booted the server, the scheduler.run()
-    # task may have already exited (no work). Relaunch if so.
-    if scheduler._campaigns[campaign.id]._task is None:
-        scheduler._launch(scheduler._campaigns[campaign.id])
+    state = scheduler._campaigns[campaign.id]
+    if body.autostart:
+        # If a scheduler loop is already running, _launch() will pick up the new
+        # state on the next tick. But if the user just booted the server, the
+        # scheduler.run() task may have already exited (no work). Relaunch if so.
+        if state._task is None:
+            scheduler._launch(state)
+    # autostart=False → leave the campaign in "queued" status. The Console
+    # starts it later via POST /campaigns/{id}/start.
     return {
         "ok": True,
         "campaign_id": campaign.id,
         "name": campaign.name,
+        "status": state.status,
     }
+
+
+@app.post("/campaigns/{campaign_id}/start")
+async def start_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
+    """Kick off a campaign that was submitted with ``autostart=false``.
+
+    A campaign created via ``POST /campaigns`` with ``autostart=false`` sits
+    in ``status="queued"`` until someone calls this endpoint. Idempotent:
+    calling it on an already-running campaign is a no-op.
+    """
+    scheduler = _scheduler(request)
+    try:
+        state = scheduler._get(campaign_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    if state.status not in ("queued",):
+        # Already started / running / terminal — report current state without error.
+        return {"ok": True, "campaign_id": campaign_id, "status": state.status}
+    if state._task is None:
+        scheduler._launch(state)
+    return {"ok": True, "campaign_id": campaign_id, "status": state.status}
 
 
 @app.get("/campaigns")

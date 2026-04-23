@@ -128,7 +128,6 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
   const [workflow, setWorkflow] = useState("");
   const [planner, setPlanner] = useState("optuna");
   const [optunaOperation, setOptunaOperation] = useState("");
-  const [optunaNTrials, setOptunaNTrials] = useState("");
   const [optunaSpace, setOptunaSpace] = useState([]);
   const [budget, setBudget] = useState("12");
   const [parallelism, setParallelism] = useState("1");
@@ -178,7 +177,6 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         payload.planner_config = {
           operation: optunaOperation.trim(),
           search_space: searchSpace,
-          ...(optunaNTrials ? { n_trials: Number(optunaNTrials) } : {}),
         };
       }
       await postJson("/campaigns", payload);
@@ -246,23 +244,17 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
     return (
       <div className="mt-2 mb-3 p-3 border border-[var(--color-line)] rounded-xl">
         <span className="text-[11px] text-[var(--color-secondary)] uppercase tracking-[0.15em] block mb-2">Optuna config</span>
-        <div className="flex gap-2 mb-3">
-          <input
-            value={optunaOperation}
-            onChange={(e) => setOptunaOperation(e.target.value)}
-            placeholder="operation to optimise (capability name)"
-            className="flex-1 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors"
-            style={{ fontFamily: "var(--font-mono)" }}
-          />
-          <input
-            value={optunaNTrials}
-            onChange={(e) => setOptunaNTrials(e.target.value)}
-            placeholder="n_trials"
-            className="w-24 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors"
-            style={{ fontFamily: "var(--font-mono)" }}
-          />
-        </div>
+        <input
+          value={optunaOperation}
+          onChange={(e) => setOptunaOperation(e.target.value)}
+          placeholder="operation to optimise (capability name)"
+          className="w-full mb-3 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors"
+          style={{ fontFamily: "var(--font-mono)" }}
+        />
         <OptunaSearchSpaceBuilder params={optunaSpace} onChange={setOptunaSpace} />
+        <p className="text-[11px] text-[var(--color-tertiary)] italic mt-2">
+          Total trials = campaign budget (above). Optuna decides the search order.
+        </p>
       </div>
     );
   };

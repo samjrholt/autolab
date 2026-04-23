@@ -148,8 +148,14 @@ class VMExecutor:
 
     def __init__(self, config: VMConfig | None = None) -> None:
         self.config = config or VMConfig.from_env()
+        # When force_surrogate is set the caller has explicitly asked us not
+        # to touch any real backend — skip pixi auto-detection AND pixi
+        # activation so run_python() uses bare python3 and surrogate paths
+        # run deterministically.
+        if self.config.force_surrogate:
+            self.config.pixi_project = None
         # Opt-out sentinel.
-        if self.config.pixi_project in ("none", ""):
+        elif self.config.pixi_project in ("none", ""):
             self.config.pixi_project = None
         elif self.config.pixi_project is None:
             self.config.pixi_project = self._autodetect_pixi_project()
@@ -269,9 +275,18 @@ class VMExecutor:
         Returns the first path whose ``pixi.toml`` exists, or ``None`` if
         no candidate matches. Quiet on failure — auto-detection is a
         best-effort convenience, not a hard requirement.
+
+        Tilde caveat
+        ------------
+        The default candidates start with ``~`` (e.g. ``~/autolab-mammos``).
+        ``shlex.quote('~/foo')`` yields ``'~/foo'`` (single-quoted), which
+        **defeats bash tilde expansion** — single-quoted strings are literal
+        and ``~`` only expands at the start of an unquoted word. We
+        therefore don't quote these known-safe internal paths; the
+        candidates are controlled literals, not user input.
         """
         for cand in DEFAULT_PIXI_PROJECT_CANDIDATES:
-            argv = self._probe_argv(f"test -f {shlex.quote(cand)}/pixi.toml")
+            argv = self._probe_argv(f"test -f {cand}/pixi.toml")
             if argv is None:
                 return None  # kind not supported for remote probing
             try:
@@ -289,7 +304,11 @@ class VMExecutor:
         """Expand a leading ``~`` against the VM's $HOME."""
         if not path.startswith("~"):
             return path
-        argv = self._probe_argv(f"echo {shlex.quote(path)}")
+        # Same tilde-expansion caveat as _autodetect_pixi_project: the path
+        # starts with ``~``, so we must NOT single-quote it or bash will
+        # treat it literally. ``echo ~/foo`` expands; ``echo '~/foo'``
+        # does not.
+        argv = self._probe_argv(f"echo {path}")
         if argv is None:
             return path
         try:

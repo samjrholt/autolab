@@ -52,7 +52,13 @@ def test_apply_bootstrap_emits_refresh_events(http_client):
         applied = http_client.post("/bootstraps/apply", json={"mode": "add_demo"})
         assert applied.status_code == 200, applied.text
 
-        kinds = {ws.receive_json()["kind"] for _ in range(4)}
-        assert "resource.registered" in kinds
-        assert "tool.registered" in kinds
-        assert "workflow.registered" in kinds
+        # add_demo bootstrap emits ≥4 events: the Lab.register_* calls each
+        # publish their own event, and POST /bootstraps/apply publishes a diff
+        # summary on top. Drain generously to see all three kinds.
+        kinds: set[str] = set()
+        need = {"resource.registered", "tool.registered", "workflow.registered"}
+        for _ in range(16):
+            if need <= kinds:
+                break
+            kinds.add(ws.receive_json()["kind"])
+        assert need <= kinds, f"missing {need - kinds}; got {kinds}"

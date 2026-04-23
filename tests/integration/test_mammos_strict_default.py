@@ -30,15 +30,21 @@ from examples.mammos_sensor.workflow import (  # noqa: E402
 )
 
 
-class _AlwaysScriptError:
+class _AlwaysScriptError(VMExecutor):
     """Stand-in VMExecutor that always raises ScriptError.
 
     Simulates a VM that is reachable but has no real backends installed —
-    the state every laptop starts in before the WSL pixi setup.
+    the state every laptop starts in before the WSL pixi setup. Inherits
+    from ``VMExecutor`` so ``_executor_from_ctx`` picks it up via the
+    isinstance check rather than constructing a real one.
     """
 
     def __init__(self) -> None:
-        self.config = VMConfig.from_env()
+        cfg = VMConfig.from_env()
+        # Bypass auto-detection of ~/autolab-mammos — we're forcing a script
+        # failure regardless of what's installed.
+        cfg.force_surrogate = True
+        super().__init__(cfg)
 
     def run_python(self, *_a, **_kw):  # noqa: D401
         raise ScriptError(
@@ -118,12 +124,12 @@ async def test_opt_in_surrogate_env_restores_fallback(tmp_path, monkeypatch):
         assert step.record.outputs.get("backend") in ("surrogate", "analytic")
 
 
-def test_server_default_bootstrap_is_mammos(tmp_path, monkeypatch):
-    """Fresh boot with no env override registers the mammos workflow + VM resource."""
+def test_server_default_boot_is_empty(tmp_path, monkeypatch):
+    """Fresh boot with no env override is an empty Lab — the only default is
+    the ``this-pc`` auto-registered resource. Demo content is out-of-band."""
     monkeypatch.setenv("AUTOLAB_ROOT", str(tmp_path / "lab"))
     monkeypatch.delenv("AUTOLAB_BOOTSTRAP", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    # Don't require VM to actually reach — probe_vm handles unreachable gracefully.
     from fastapi.testclient import TestClient
     from autolab.server.app import app
 
@@ -133,8 +139,31 @@ def test_server_default_bootstrap_is_mammos(tmp_path, monkeypatch):
     workflows = {w["name"] for w in body["workflows"]}
     tools = {t["capability"] for t in body["tools"]}
 
+    assert resources == {"this-pc"}, f"unexpected default resources: {resources}"
+    assert workflows == set(), f"unexpected default workflows: {workflows}"
+    assert tools == set(), f"unexpected default tools: {tools}"
+    assert body["planners_available"] == ["optuna", "claude"]
+
+
+def test_mammos_bootstrap_apply_registers_sensor_workflow(tmp_path, monkeypatch):
+    """Applying ``mammos`` via POST /bootstraps/apply registers the VM
+    resource, both sensor operations, and the sensor_shape_opt workflow."""
+    monkeypatch.setenv("AUTOLAB_ROOT", str(tmp_path / "lab"))
+    monkeypatch.delenv("AUTOLAB_BOOTSTRAP", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    from fastapi.testclient import TestClient
+    from autolab.server.app import app
+
+    with TestClient(app) as client:
+        r = client.post("/bootstraps/apply", json={"mode": "mammos"})
+        assert r.status_code == 200, r.text
+        body = client.get("/status").json()
+
+    resources = {r["name"] for r in body["resources"]}
+    workflows = {w["name"] for w in body["workflows"]}
+    tools = {t["capability"] for t in body["tools"]}
     assert "this-pc" in resources
     assert "vm-primary" in resources
+    assert "sensor_shape_opt" in workflows
     assert MAMMOS_SENSOR_WORKFLOW.name in workflows
-    assert {"mammos.sensor_mesh", "mammos.micromagnetic_hysteresis"} <= tools
-    assert body["planners_available"] == ["optuna", "claude"]
+    assert {"mammos.sensor_material_at_T", "mammos.sensor_shape_fom"} <= tools
