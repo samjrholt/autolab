@@ -12,7 +12,24 @@ from __future__ import annotations
 
 import argparse
 import os
+import socket
 import sys
+import time
+
+
+def _wait_for_socket_available(host: str, port: int, timeout: int = 10) -> None:
+    """Wait for socket to be available (handles Windows TIME_WAIT lag)."""
+    start = time.time()
+    while time.time() - start < timeout:
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, port))
+            sock.close()
+            return
+        except OSError:
+            time.sleep(0.5)
+    raise RuntimeError(f"Socket {host}:{port} never became available (timeout after {timeout}s)")
 
 
 def main() -> None:
@@ -46,6 +63,9 @@ def main() -> None:
     os.environ["AUTOLAB_BOOTSTRAP"] = args.bootstrap
     if args.root:
         os.environ["AUTOLAB_ROOT"] = args.root
+
+    # On Windows, socket can linger in TIME_WAIT after shutdown. Wait for it to clear.
+    _wait_for_socket_available(args.host, args.port, timeout=10)
 
     import uvicorn  # type: ignore[import]
     uvicorn.run(

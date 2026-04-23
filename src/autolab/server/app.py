@@ -66,6 +66,7 @@ import logging
 import os
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -624,29 +625,41 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
-        # Cooperative cancellation — never .cancel() a task mid-SQLite-write
-        # or Windows raises an access violation in the worker thread.
+        log.info("autolab server shutting down...")
+        # Close all WebSocket connections first — give clients a chance to disconnect cleanly.
+        await ws_manager.broadcast({"kind": "server.shutdown", "timestamp": datetime.utcnow().isoformat()})
+        await asyncio.sleep(0.1)  # Brief window for clients to acknowledge.
+
+        # Cooperative cancellation of running campaigns.
         for cid, state in list(scheduler._campaigns.items()):
             if state.status in ("running", "paused", "queued"):
                 try:
                     await scheduler.cancel(cid)
                 except Exception:
                     pass
-        # Wait for the scheduler.run() task to finish naturally.
+
+        # Give the scheduler a bounded time to finish naturally.
         try:
-            await asyncio.wait_for(sched_task, timeout=10.0)
+            await asyncio.wait_for(sched_task, timeout=5.0)
         except (asyncio.TimeoutError, Exception):
             pass
-        # Drain any in-flight Claude claim persistence tasks before the Ledger
-        # closes — otherwise a SQLite worker thread can race with Lab.close().
-        await drain_pending_claims()
-        # Now it's safe to tear down the event bridge.
+
+        # Drain any in-flight Claude claim persistence before ledger closes.
+        try:
+            await asyncio.wait_for(drain_pending_claims(), timeout=3.0)
+        except (asyncio.TimeoutError, Exception):
+            pass
+
+        # Forcefully cancel the event bridge.
         bridge.cancel()
         try:
-            await bridge
+            await asyncio.wait_for(asyncio.shield(bridge), timeout=1.0)
         except Exception:
             pass
+
+        # Close the lab (flushes SQLite, closes connections).
         lab.close()
+        log.info("autolab server shutdown complete")
 
 
 app = FastAPI(title="autolab", lifespan=lifespan)

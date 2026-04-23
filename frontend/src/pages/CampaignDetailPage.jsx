@@ -126,6 +126,11 @@ function ConfigTab({ campaign, refresh }) {
       </div>
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        {campaign.status === "queued" ? (
+          <button type="button" disabled={busy} onClick={() => doAction("start")} className="btn-secondary" style={{ color: "var(--color-status-green)", borderColor: "rgba(92, 164, 115, 0.3)" }}>
+            Start campaign
+          </button>
+        ) : null}
         {campaign.status === "running" ? (
           <button type="button" disabled={busy} onClick={() => doAction("pause")} className="btn-secondary">
             Pause
