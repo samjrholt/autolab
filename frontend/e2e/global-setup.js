@@ -6,12 +6,27 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 /**
- * Clean the E2E test ledger directory before each full run so tests
- * start from a known state (demo_quadratic bootstrap only).
+ * Best-effort cleanup for old E2E ledger directories.
+ *
+ * The active run gets a unique AUTOLAB_ROOT from playwright.config.js, so a
+ * locked stale SQLite file should not fail the suite or touch a developer's
+ * normal .autolab-runs/default lab.
  */
 export default async function globalSetup() {
-  const ledgerDir = path.resolve(__dirname, "..", "..", ".autolab-runs", "e2e-test");
-  if (fs.existsSync(ledgerDir)) {
-    fs.rmSync(ledgerDir, { recursive: true, force: true });
+  const runsDir = path.resolve(__dirname, "..", "..", ".autolab-runs");
+  if (!fs.existsSync(runsDir)) return;
+  const activeRoot = process.env.AUTOLAB_E2E_ROOT
+    ? path.resolve(__dirname, "..", "..", process.env.AUTOLAB_E2E_ROOT)
+    : null;
+
+  for (const entry of fs.readdirSync(runsDir, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith("e2e-test")) continue;
+    const target = path.join(runsDir, entry.name);
+    if (activeRoot && path.resolve(target) === activeRoot) continue;
+    try {
+      fs.rmSync(target, { recursive: true, force: true });
+    } catch (error) {
+      console.warn(`Skipping locked E2E run directory ${target}: ${error}`);
+    }
   }
 }

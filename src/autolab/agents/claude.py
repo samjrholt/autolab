@@ -116,7 +116,7 @@ class ClaudeTransport:
         self.max_tokens = max_tokens
         key = api_key or os.environ.get("ANTHROPIC_API_KEY")
         if offline is None:
-            self.offline = key is None
+            self.offline = key is None or os.environ.get("AUTOLAB_CLAUDE_OFFLINE") == "1"
         else:
             self.offline = offline
         self._api_key = key
@@ -159,6 +159,23 @@ def _offline_response(system: str, user: str) -> str:
     server and exercise integration tests without real credentials.
     """
     lowered = (system + "\n" + user).lower()
+    if "data chat analyst" in lowered:
+        return json.dumps(
+            {
+                "answer": "[offline fallback] Generated a chart from the ledger context.",
+                "chart": {
+                    "type": "line",
+                    "title": "Best score by trial",
+                    "subtitle": "Best-so-far objective values from completed ledger records.",
+                    "x": "trial",
+                    "y": "objective_value",
+                    "series_by": "campaign_name",
+                    "transform": "best_so_far",
+                    "aggregate": "none",
+                    "filters": [],
+                },
+            }
+        )
     if "decide which action" in lowered or "policy_provider" in lowered:
         # Conservative offline policy: accept on pass, continue otherwise.
         return json.dumps(

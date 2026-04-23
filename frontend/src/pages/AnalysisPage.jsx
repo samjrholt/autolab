@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 
 import { postJson } from "../lib/api";
 import PageHeader from "../shell/PageHeader";
@@ -213,12 +213,6 @@ function Legend({ series }) {
 }
 
 function AssistantPanel({ messages, prompt, setPrompt, onRequest, busy, hasRecords }) {
-  const suggestions = [
-    "Compare campaign objectives over trial number",
-    "Show best-so-far convergence for each campaign",
-    "Plot outputs.sx_nm by trial, grouped by campaign",
-    "Which campaigns have failed records?",
-  ];
   return (
     <section className="analysis-chat">
       <div className="analysis-chat-title">
@@ -232,13 +226,6 @@ function AssistantPanel({ messages, prompt, setPrompt, onRequest, busy, hasRecor
           </div>
         ))}
       </div>
-      <div className="analysis-suggestions">
-        {suggestions.map((item) => (
-          <button type="button" key={item} onClick={() => onRequest(item)} disabled={busy || !hasRecords}>
-            {item}
-          </button>
-        ))}
-      </div>
       <form
         className="analysis-chat-form"
         onSubmit={(event) => {
@@ -250,7 +237,7 @@ function AssistantPanel({ messages, prompt, setPrompt, onRequest, busy, hasRecor
           aria-label="Ask for a ledger visualization"
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
-          placeholder="Ask about the ledger: compare campaigns, plot an output, find failures, or summarize trends..."
+          placeholder="Ask about the ledger."
           rows={4}
           disabled={!hasRecords}
         />
@@ -267,7 +254,6 @@ export default function AnalysisPage({ campaigns = [], records = [] }) {
   const [result, setResult] = useState(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const [autoRan, setAutoRan] = useState(false);
   const [messages, setMessages] = useState([
     {
       role: "assistant",
@@ -288,8 +274,8 @@ export default function AnalysisPage({ campaigns = [], records = [] }) {
     setError("");
     setMessages((previous) => [...previous, { role: "user", content: query }].slice(-10));
     try {
-      const body = { prompt: query, campaign_ids: campaigns.map(c => c.campaign_id || c.id).filter(Boolean) };
-        const next = await postJson("/analysis/query", body);
+      const body = { prompt: query, campaign_ids: campaigns.map((c) => c.campaign_id || c.id).filter(Boolean) };
+      const next = await postJson("/analysis/query", body);
       setResult(next);
       setMessages((previous) => [
         ...previous,
@@ -306,14 +292,6 @@ export default function AnalysisPage({ campaigns = [], records = [] }) {
       setBusy(false);
     }
   };
-
-  useEffect(() => {
-    if (hasRecords && !autoRan) {
-      setAutoRan(true);
-      runAnalysis("Compare campaign objectives over trial number");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasRecords, autoRan]);
 
   return (
     <>
@@ -348,7 +326,7 @@ export default function AnalysisPage({ campaigns = [], records = [] }) {
                 {busy
                   ? "Reading the ledger fields and choosing the simplest useful chart."
                   : hasRecords
-                    ? "Try a comparison, a trend, a best-so-far curve, or a failure summary."
+                    ? "Type a question to inspect the live ledger data."
                     : "Run a campaign first, then come back here to discuss the data."}
               </p>
             </section>

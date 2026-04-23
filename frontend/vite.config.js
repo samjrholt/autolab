@@ -24,6 +24,9 @@ const apiPrefixes = [
   "/escalations",
 ];
 
+const serverPort = Number(process.env.VITE_PORT || 5173);
+const apiTarget = process.env.AUTOLAB_API_TARGET || "http://localhost:8000";
+const wsTarget = apiTarget.replace(/^http/, "ws");
 
 export default defineConfig({
   plugins: [tailwindcss(), react()],
@@ -34,11 +37,11 @@ export default defineConfig({
   },
   server: {
     host: "0.0.0.0",
-    port: 5173,
+    port: serverPort,
     proxy: {
-      ...Object.fromEntries(apiPrefixes.map((prefix) => [prefix, "http://localhost:8000"])),
+      ...Object.fromEntries(apiPrefixes.map((prefix) => [prefix, apiTarget])),
       "/events": {
-        target: "ws://localhost:8000",
+        target: wsTarget,
         ws: true,
       },
     },

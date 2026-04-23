@@ -2,10 +2,12 @@
 import { test, expect } from "@playwright/test";
 import { waitForConnection } from "./helpers.js";
 
+const API_BASE = "http://127.0.0.1:8010";
+
 async function seedCampaign(request) {
-  const create = await request.post("http://127.0.0.1:8000/campaigns", {
+  const create = await request.post(`${API_BASE}/campaigns`, {
     data: {
-      name: "data-chat-e2e",
+      name: "playwright-ledger-fixture",
       objective: { key: "score", direction: "maximise" },
       budget: 3,
       planner: "optuna",
@@ -24,7 +26,7 @@ async function seedCampaign(request) {
 
   const deadline = Date.now() + 15_000;
   while (Date.now() < deadline) {
-    const status = await request.get(`http://127.0.0.1:8000/campaigns/${campaignId}`);
+    const status = await request.get(`${API_BASE}/campaigns/${campaignId}`);
     expect(status.ok()).toBeTruthy();
     const payload = await status.json();
     if (["completed", "failed", "cancelled"].includes(payload.status)) {
@@ -43,16 +45,18 @@ test.describe("Data Chat — live ledger query flow", () => {
     await page.goto("/");
     await waitForConnection(page);
 
+    await page.locator("aside").first().getByRole("button", { name: "Data Chat", exact: true }).click();
+
+    await expect(page.getByRole("heading", { name: "Data Chat", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Ask for a ledger visualization")).toBeVisible();
+
     const analysisResponsePromise = page.waitForResponse(
       (response) =>
         response.url().includes("/analysis/query") && response.request().method() === "POST",
     );
 
-    await page.locator("aside").first().getByRole("button", { name: "Data Chat", exact: true }).click();
-
-    await expect(page.getByRole("heading", { name: "Data Chat", exact: true })).toBeVisible();
-    await expect(page.getByText("Ask your data", { exact: true })).toBeVisible();
-    await expect(page.getByText("One question, one chart", { exact: true })).toBeVisible();
+    await page.getByLabel("Ask for a ledger visualization").fill("Show best-so-far convergence for each campaign");
+    await page.getByRole("button", { name: "Ask", exact: true }).click();
 
     const analysisResponse = await analysisResponsePromise;
     expect(analysisResponse.status()).toBe(200);
