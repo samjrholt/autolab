@@ -49,7 +49,7 @@ export default function Sidebar({ route, navigate, labName = "default" }) {
         onClick={() => navigate({ page: "campaigns" })}
       />
       <SidebarItem
-        label="Analysis"
+        label="Data Chat"
         icon="/"
         active={is("analysis")}
         onClick={() => navigate({ page: "analysis" })}

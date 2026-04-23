@@ -28,7 +28,7 @@ const CRUMBS = {
   capabilities: ["Library", "Capabilities"],
   workflows: ["Library", "Workflows"],
   ledger: ["Ledger"],
-  analysis: ["Analysis"],
+  analysis: ["Data Chat"],
   assistant: ["Setup", "Assistant"],
   settings: ["Settings"],
 };

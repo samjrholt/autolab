@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(codex exec * also use gpt 5.4 not 5.3)",
+      "Bash(codex --version)"
+    ]
+  }
+}

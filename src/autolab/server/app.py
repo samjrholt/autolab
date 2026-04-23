@@ -1136,16 +1136,16 @@ async def design_campaign(body: DesignRequest, request: Request) -> dict[str, An
 
 
 # ---------------------------------------------------------------------------
-# Analysis designer (Claude)
+# Data Chat designer (Claude)
 # ---------------------------------------------------------------------------
 
 
-_ANALYSIS_SYSTEM = """You are the Analysis Designer for autolab, an autonomous
-science lab. A scientist asks for a visualization over campaign ledger records.
+_ANALYSIS_SYSTEM = """You are the Data Chat analyst for autolab, an autonomous
+science lab. A scientist asks about campaign ledger records.
 Return ONLY one compact JSON object:
 
 {
-  "answer": "one short interpretation of what this chart will show",
+  "answer": "one short interpretation grounded in the rows and values you used",
   "chart": {
     "type": "line|scatter|bar",
     "title": "short title",
@@ -1163,7 +1163,9 @@ Use only fields listed in the context. Useful generic fields include:
 trial, objective_value, duration_s, campaign_name, planner, operation,
 record_status, created_at, inputs.<name>, outputs.<name>, decision.<name>.
 For convergence or objective requests, prefer x=trial, y=objective_value,
-series_by=campaign_name, transform=best_so_far. If objective_value is not
+series_by=campaign_name, transform=best_so_far. For failure questions, prefer
+type=bar, x=campaign_name, aggregate=count, and filter record_status to failed
+if that field exists. If objective_value is not
 available, choose a field from potential_objective_fields. For runtime
 requests, prefer type=bar, x=campaign_name, y=duration_s, aggregate=mean.
 Never mention unavailable fields."""
@@ -1268,11 +1270,9 @@ def _analysis_context(
                 "status": state.status,
             }
         )
-    sample_rows = [
-        _analysis_compact_row(r)
-        for r in rows
-        if r.get("record_status") == "completed"
-    ][-12:]
+    sample_rows = [_analysis_compact_row(r) for r in rows if r.get("record_status") == "completed"][
+        -12:
+    ]
     payload = {
         "scientist_prompt": prompt,
         "campaigns": campaign_rows,
@@ -1382,7 +1382,9 @@ def _materialise_analysis_chart(spec: dict[str, Any], rows: list[dict[str, Any]]
     }
 
 
-def _analysis_point_series(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, Any]]:
+def _analysis_point_series(
+    rows: list[dict[str, Any]], spec: dict[str, Any]
+) -> list[dict[str, Any]]:
     groups: dict[str, list[dict[str, Any]]] = {}
     for row in rows:
         x = _analysis_value(row, spec["x"])
