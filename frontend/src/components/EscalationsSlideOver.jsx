@@ -19,7 +19,10 @@ export default function EscalationsSlideOver({ open, onClose, refresh }) {
   }, [open]);
 
   const resolve = async (id, choice, note = "") => {
-    await postJson(`/escalations/${id}/resolve`, { choice, note });
+    await postJson(`/escalations/${id}/resolve`, {
+      action: choice,
+      reason: note || `Human selected ${choice}.`,
+    });
     setEscalations((prev) => prev.filter((e) => e.id !== id));
     refresh?.();
   };

@@ -10,13 +10,18 @@ function statusChip(status) {
     failed: "var(--color-status-red)",
     pending: "var(--color-secondary)",
     soft_fail: "var(--color-status-amber)",
+    paused: "var(--color-status-blue)",
   };
   const color = map[status] || "var(--color-secondary)";
   return (
     <span style={{ display: "inline-flex", alignItems: "center", gap: 6, color, fontSize: 12 }}>
-      <span className="status-dot" style={{ background: color }} /> {status || "—"}
+      <span className="status-dot" style={{ background: color }} /> {status || "-"}
     </span>
   );
+}
+
+function rowStatus(record) {
+  return record.status || record.record_status || "pending";
 }
 
 export default function LedgerPage({ records, onSelectRecord, campaignIdFilter }) {
@@ -33,7 +38,7 @@ export default function LedgerPage({ records, onSelectRecord, campaignIdFilter }
         r.operation?.toLowerCase().includes(q) ||
         r.id?.toLowerCase().includes(q) ||
         r.module?.toLowerCase().includes(q) ||
-        r.status?.toLowerCase().includes(q),
+        rowStatus(r).toLowerCase().includes(q),
     );
   }, [records, query, campaignIdFilter]);
 
@@ -62,8 +67,9 @@ export default function LedgerPage({ records, onSelectRecord, campaignIdFilter }
           description="Append-only, hashed record of every Operation this lab has ever run. Each row is a Record; click for inputs, outputs, artefacts, and lineage."
         >
           <input
-            type="text"
-            placeholder="Filter…"
+            type="search"
+            aria-label="Filter ledger records"
+            placeholder="Filter..."
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             style={{
@@ -93,20 +99,33 @@ export default function LedgerPage({ records, onSelectRecord, campaignIdFilter }
           </thead>
           <tbody>
             {filtered.map((r) => (
-              <tr key={r.id} onClick={() => onSelectRecord?.(r)}>
+              <tr
+                key={r.id}
+                tabIndex={onSelectRecord ? 0 : undefined}
+                role={onSelectRecord ? "button" : undefined}
+                aria-label={onSelectRecord ? `Open record ${r.operation || r.id}` : undefined}
+                onClick={() => onSelectRecord?.(r)}
+                onKeyDown={(event) => {
+                  if (!onSelectRecord) return;
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelectRecord(r);
+                  }
+                }}
+              >
                 <td style={{ color: "var(--color-secondary)", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>
                   {formatTime(r.finalised_at || r.created_at)}
                 </td>
                 <td style={{ color: "var(--color-text)", fontFamily: "var(--font-mono)", fontSize: 12 }}>
-                  {r.operation || "—"}
+                  {r.operation || "-"}
                 </td>
-                <td>{statusChip(r.status)}</td>
-                <td style={{ color: "var(--color-muted)", fontSize: 12 }}>{r.module || "—"}</td>
+                <td>{statusChip(rowStatus(r))}</td>
+                <td style={{ color: "var(--color-muted)", fontSize: 12 }}>{r.module || "-"}</td>
                 <td style={{ color: "var(--color-muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-                  {r.campaign_id ? r.campaign_id.slice(0, 12) + "…" : "—"}
+                  {r.campaign_id ? `${r.campaign_id.slice(0, 12)}...` : "-"}
                 </td>
                 <td style={{ color: "var(--color-tertiary)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
-                  {r.id ? r.id.slice(4, 14) : "—"}
+                  {r.checksum ? r.checksum.slice(0, 10) : r.id ? r.id.slice(4, 14) : "-"}
                 </td>
               </tr>
             ))}

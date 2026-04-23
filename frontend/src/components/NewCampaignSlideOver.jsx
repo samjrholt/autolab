@@ -159,9 +159,14 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         priority: 50,
         planner,
         planner_config: {},
-        workflow: workflow || undefined,
+        workflow: workflows.find((w) => w.name === workflow) || undefined,
         use_claude_policy: claudeAvailable && planner !== "claude",
       };
+      if (!payload.objective) {
+        setError("Add the objective output key you want the campaign to optimise.");
+        setSubmitting(false);
+        return;
+      }
       if (planner === "optuna") {
         const searchSpace = paramsToSearchSpace(optunaSpace);
         if (Object.keys(searchSpace).length === 0) {
@@ -247,6 +252,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         <input
           value={optunaOperation}
           onChange={(e) => setOptunaOperation(e.target.value)}
+          aria-label="Operation to optimise"
           placeholder="operation to optimise (capability name)"
           className="w-full mb-3 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors"
           style={{ fontFamily: "var(--font-mono)" }}
@@ -261,19 +267,19 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
 
   const manualForm = (
     <div>
-      <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Campaign name" className="w-full mb-2 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
-      <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="w-full mb-3 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
+      <input type="text" aria-label="Campaign name" value={name} onChange={(e) => setName(e.target.value)} placeholder="Campaign name" className="w-full mb-2 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
+      <input type="text" aria-label="Campaign description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="w-full mb-3 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
 
       <div className="flex gap-2 mb-3">
-        <input type="text" value={objectiveKey} onChange={(e) => setObjectiveKey(e.target.value)} placeholder="Objective key (e.g. coercivity_kAm)" className="flex-1 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
-        <select value={direction} onChange={(e) => setDirection(e.target.value)} className="w-32 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-lg px-2 py-1.5 text-[13px] text-white focus:outline-none">
+        <input type="text" aria-label="Objective output key" value={objectiveKey} onChange={(e) => setObjectiveKey(e.target.value)} placeholder="Objective key (e.g. coercivity_kAm)" className="flex-1 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
+        <select aria-label="Objective direction" value={direction} onChange={(e) => setDirection(e.target.value)} className="w-32 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-lg px-2 py-1.5 text-[13px] text-white focus:outline-none">
           <option value="maximise">Maximise</option>
           <option value="minimise">Minimise</option>
         </select>
       </div>
 
       {workflows.length > 0 && (
-        <select value={workflow} onChange={(e) => setWorkflow(e.target.value)} className="w-full mb-3 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-lg px-2 py-1.5 text-[13px] text-white focus:outline-none">
+        <select aria-label="Workflow" value={workflow} onChange={(e) => setWorkflow(e.target.value)} className="w-full mb-3 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-lg px-2 py-1.5 text-[13px] text-white focus:outline-none">
           <option value="">Workflow (optional)</option>
           {workflows.map((w) => <option key={w.name} value={w.name}>{w.name}</option>)}
         </select>
@@ -315,7 +321,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
       <AcceptanceCriteriaBuilder rules={rules} onChange={setRules} />
 
       {error && <p className="text-[var(--color-status-red)] text-[13px] mt-2">{error}</p>}
-      <button type="button" onClick={submitManual} disabled={submitting || !name.trim()} className="mt-4 bg-white text-[var(--color-bg)] rounded-full px-5 py-2 text-[14px] font-semibold hover:bg-white/90 transition-all disabled:opacity-30">
+      <button type="button" onClick={submitManual} disabled={submitting || !name.trim() || !objectiveKey.trim()} className="mt-4 bg-white text-[var(--color-bg)] rounded-full px-5 py-2 text-[14px] font-semibold hover:bg-white/90 transition-all disabled:opacity-30">
         {submitting ? "Starting…" : "Start campaign"}
       </button>
     </div>

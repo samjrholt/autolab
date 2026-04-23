@@ -5,6 +5,26 @@ import { getJson, wsUrl } from "../lib/api";
 
 const LEDGER_LIMIT = 320;
 
+function normaliseRecord(record) {
+  const status = record.status || record.record_status || "pending";
+  return { ...record, status, record_status: record.record_status || status };
+}
+
+function normaliseCampaign(campaign) {
+  const summary = campaign.summary || {};
+  return {
+    ...campaign,
+    objective: campaign.objective || {
+      key: campaign.objective_key,
+      direction: campaign.direction || "maximise",
+    },
+    planner: campaign.planner || campaign.planner_name || "planner",
+    completed_records: campaign.completed_records ?? summary.records?.length ?? 0,
+    total_records: campaign.total_records ?? 0,
+    steps_run: campaign.steps_run ?? summary.steps_run ?? null,
+    best_value: campaign.best_value ?? summary.best_outputs?.[campaign.objective_key],
+  };
+}
 
 export function useLabState() {
   const [status, setStatus] = useState(null);
@@ -25,8 +45,11 @@ export function useLabState() {
         getJson("/status"),
         getJson(ledgerPath),
       ]);
-      setStatus(nextStatus);
-      setRecords(nextLedger.records || []);
+      setStatus({
+        ...nextStatus,
+        campaigns: (nextStatus.campaigns || []).map(normaliseCampaign),
+      });
+      setRecords((nextLedger.records || []).map(normaliseRecord));
     } catch (err) {
       setError(String(err));
     } finally {

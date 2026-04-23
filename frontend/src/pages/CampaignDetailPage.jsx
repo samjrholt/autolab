@@ -12,6 +12,7 @@ function statusChip(status) {
     queued: "var(--color-status-amber)",
     paused: "var(--color-status-blue)",
     completed: "var(--color-secondary)",
+    stopped: "var(--color-status-amber)",
     failed: "var(--color-status-red)",
     cancelled: "var(--color-secondary)",
   }[status] || "var(--color-secondary)";
@@ -30,6 +31,7 @@ function PlanTab({ campaign, records, resources, events, railCollapsed, onToggle
 
   return (
     <div
+      className="campaign-plan-layout"
       style={{
         display: "grid",
         gridTemplateColumns: railCollapsed ? "1fr 40px" : "minmax(0, 2fr) minmax(260px, 1fr)",
@@ -39,11 +41,11 @@ function PlanTab({ campaign, records, resources, events, railCollapsed, onToggle
     >
       <div style={{ display: "flex", flexDirection: "column", gap: 12, minWidth: 0 }}>
         <div
+          className="campaign-visual-grid"
           style={{
             display: "grid",
             gridTemplateColumns: "minmax(0, 3fr) minmax(240px, 2fr)",
             gap: 12,
-            "@media": "1200",
           }}
         >
           <div className="panel" style={{ padding: 14, minWidth: 0 }}>
@@ -82,8 +84,9 @@ function ReportTab({ campaign }) {
         Reports render progressively as a campaign runs and are exportable as PDF once the campaign completes.
       </p>
       <div style={{ fontSize: 13, color: "var(--color-muted)", marginTop: 16 }}>
-        <div><span style={{ color: "var(--color-secondary)" }}>Goal:</span> {campaign.objective?.description || campaign.name || "—"}</div>
+        <div><span style={{ color: "var(--color-secondary)" }}>Goal:</span> {campaign.description || campaign.name || campaign.objective?.key || "—"}</div>
         <div><span style={{ color: "var(--color-secondary)" }}>Planner:</span> {campaign.planner || "—"}</div>
+        {campaign.workflow ? <div><span style={{ color: "var(--color-secondary)" }}>Workflow:</span> {campaign.workflow}</div> : null}
         <div><span style={{ color: "var(--color-secondary)" }}>Status:</span> {campaign.status}</div>
       </div>
     </div>
@@ -164,12 +167,13 @@ export default function CampaignDetailPage({ campaign, records, resources, event
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between", gap: 16 }}>
           <div>
             <h1 style={{ margin: 0, fontSize: 18, fontWeight: 500 }}>
-              {campaign.objective?.description || campaign.name || campaign.campaign_id}
+              {campaign.description || campaign.name || campaign.objective?.key || campaign.campaign_id}
             </h1>
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginTop: 4, fontSize: 12, color: "var(--color-secondary)" }}>
               {statusChip(campaign.status)}
               {campaign.started_at ? <span>· started {formatTime(campaign.started_at)}</span> : null}
               {campaign.planner ? <span>· {campaign.planner}</span> : null}
+              {campaign.workflow ? <span>· workflow {campaign.workflow}</span> : null}
             </div>
           </div>
           <div style={{ display: "flex", gap: 8 }}>

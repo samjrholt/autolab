@@ -62,6 +62,7 @@ CampaignStatus = Literal[
     "running",
     "paused",
     "completed",
+    "stopped",
     "cancelled",
     "failed",
 ]
@@ -222,17 +223,19 @@ class CampaignScheduler:
             pause_event=state._pause_event,
             cancel_check=lambda: state.status == "cancelled",
         )
+        self._lab._active_runners[state.campaign.id] = runner
         try:
             summary = await runner.run()
             state.summary = summary
             if state.status not in ("cancelled",):
-                state.status = "completed"
+                state.status = "stopped" if summary.status == "stopped" else "completed"
         except asyncio.CancelledError:
             state.status = "cancelled"
         except Exception as exc:
             state.status = "failed"
             state.error = repr(exc)
         finally:
+            self._lab._active_runners.pop(state.campaign.id, None)
             state.completed_at = datetime.now(UTC)
 
     # ------------------------------------------------------------------
@@ -241,21 +244,49 @@ class CampaignScheduler:
 
     def status(self) -> list[dict[str, Any]]:
         """Return a snapshot of all campaign states, sorted by priority."""
-        return [
-            {
-                "campaign_id": s.campaign.id,
-                "name": s.campaign.name,
-                "priority": s.priority,
-                "status": s.status,
-                "submitted_at": s.submitted_at.isoformat(),
-                "started_at": s.started_at.isoformat() if s.started_at else None,
-                "completed_at": s.completed_at.isoformat() if s.completed_at else None,
-                "objective_key": s.campaign.objective.key,
-                "budget": s.campaign.budget,
-                "error": s.error,
-            }
-            for s in sorted(self._campaigns.values(), key=lambda x: x.priority)
-        ]
+        rows = []
+        for s in sorted(self._campaigns.values(), key=lambda x: x.priority):
+            records = list(self._lab.ledger.iter_records(campaign_id=s.campaign.id))
+            completed_records = [r for r in records if r.record_status == "completed"]
+            failed_records = [r for r in records if r.record_status == "failed"]
+            objective_key = s.campaign.objective.key
+            best_record = _best_record(
+                completed_records,
+                objective_key,
+                s.campaign.objective.direction,
+            )
+            rows.append(
+                {
+                    "campaign_id": s.campaign.id,
+                    "name": s.campaign.name,
+                    "description": s.campaign.description,
+                    "priority": s.priority,
+                    "status": s.status,
+                    "submitted_at": s.submitted_at.isoformat(),
+                    "started_at": s.started_at.isoformat() if s.started_at else None,
+                    "completed_at": s.completed_at.isoformat() if s.completed_at else None,
+                    "planner": s.planner.name,
+                    "objective": s.campaign.objective.model_dump(mode="json"),
+                    "objective_key": s.campaign.objective.key,
+                    "acceptance": (
+                        s.campaign.acceptance.model_dump(mode="json")
+                        if s.campaign.acceptance
+                        else None
+                    ),
+                    "budget": s.campaign.budget,
+                    "parallelism": s.campaign.parallelism,
+                    "workflow": s.campaign.workflow.name if s.campaign.workflow else None,
+                    "total_records": len(records),
+                    "completed_records": len(completed_records),
+                    "failed_records": len(failed_records),
+                    "steps_run": s.summary.steps_run if s.summary else None,
+                    "summary": s.summary.model_dump(mode="json") if s.summary else None,
+                    "best_record_id": best_record.id if best_record else None,
+                    "best_value": best_record.outputs.get(objective_key) if best_record else None,
+                    "error": s.error,
+                }
+            )
+        return rows
 
     def get_summary(self, campaign_id: str) -> CampaignSummary | None:
         return self._get(campaign_id).summary
@@ -347,3 +378,11 @@ class _PausableRunner(CampaignRunner):
 
 
 __all__ = ["CampaignScheduler", "CampaignState", "CampaignStatus"]
+
+
+def _best_record(records: list[Any], key: str, direction: str) -> Any | None:
+    scored = [r for r in records if isinstance(r.outputs.get(key), (int, float))]
+    if not scored:
+        return None
+    reverse = direction == "maximise"
+    return sorted(scored, key=lambda r: r.outputs[key], reverse=reverse)[0]

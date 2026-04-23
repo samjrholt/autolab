@@ -7,12 +7,17 @@ from typing import Any
 import pytest
 
 from autolab import (
+    Action,
+    ActionType,
     Campaign,
     CampaignScheduler,
+    DecisionContext,
+    EscalationResolution,
     Lab,
     Objective,
     OperationContext,
     OperationResult,
+    PolicyProvider,
     Resource,
 )
 from autolab.models import ProposedStep
@@ -32,6 +37,19 @@ class _ScoreOp(Operation):
         return OperationResult(status="completed", outputs={"score": x})
 
 
+class _EscalatingOp(Operation):
+    capability = "escalating_op"
+    resource_kind = "computer"
+    module = "escalating_op.v0"
+
+    async def run(self, inputs: dict[str, Any], ctx: OperationContext) -> OperationResult:
+        return OperationResult(
+            status="failed",
+            error="needs human review",
+            failure_mode="process_deviation",
+        )
+
+
 _SCORE_DECL = {
     "name": "score_op",
     "capability": "score_op",
@@ -45,6 +63,27 @@ _SCORE_DECL = {
     "inputs": {"x": {"kind": "scalar"}},
     "outputs": {"score": {"kind": "scalar"}},
 }
+
+_ESCALATING_DECL = {
+    "name": "escalating_op",
+    "capability": "escalating_op",
+    "version": "0.1.0",
+    "module": "escalating_op.v0",
+    "resource": "computer",
+    "requires": {},
+    "adapter": "tests.integration.test_scheduler:_EscalatingOp",
+    "produces_sample": False,
+    "destructive": False,
+    "inputs": {},
+    "outputs": {},
+}
+
+
+class _AlwaysEscalatePolicy(PolicyProvider):
+    def decide(self, ctx: DecisionContext) -> Action:
+        if ActionType.ESCALATE in ctx.allowed_actions:
+            return Action(type=ActionType.ESCALATE, reason="operator review required")
+        return Action(type=ActionType.CONTINUE, reason="resolved")
 
 
 class _FixedPlanner(Planner):
@@ -63,10 +102,25 @@ class _FixedPlanner(Planner):
         return [ProposedStep(operation="score_op", inputs={"x": x})]
 
 
+class _EscalatingPlanner(Planner):
+    name = "escalating"
+
+    def __init__(self) -> None:
+        super().__init__(policy=_AlwaysEscalatePolicy())
+        self._done = False
+
+    def plan(self, ctx: PlanContext) -> list[ProposedStep]:
+        if self._done:
+            return []
+        self._done = True
+        return [ProposedStep(operation="escalating_op", inputs={})]
+
+
 def _lab(tmp_path) -> Lab:
     lab = Lab(tmp_path, lab_id="lab-sched")
     lab.register_resource(Resource(name="pc-1", kind="computer"))
     lab.register_tool_dict(_SCORE_DECL)
+    lab.register_tool_dict(_ESCALATING_DECL)
     return lab
 
 
@@ -129,8 +183,9 @@ async def test_scheduler_cancel_stops_campaign(tmp_path):
                     break
             await scheduler.cancel(camp.id)
 
-        asyncio.create_task(cancel_after())
+        cancel_task = asyncio.create_task(cancel_after())
         await scheduler.run()
+        await cancel_task
 
         s = next(x for x in scheduler.status() if x["name"] == "to-cancel")
         assert s["status"] == "cancelled"
@@ -153,8 +208,9 @@ async def test_scheduler_pause_and_resume(tmp_path):
             await asyncio.sleep(0.05)
             await scheduler.resume(camp.id)
 
-        asyncio.create_task(pause_then_resume())
+        pause_task = asyncio.create_task(pause_then_resume())
         await scheduler.run()
+        await pause_task
 
         s = next(x for x in scheduler.status() if x["name"] == "pausable")
         assert s["status"] == "completed"
@@ -171,3 +227,38 @@ async def test_scheduler_status_sorted_by_priority(tmp_path):
         await scheduler.run()
         priorities = [s["priority"] for s in scheduler.status()]
         assert priorities == sorted(priorities)
+
+
+@pytest.mark.asyncio
+async def test_scheduler_campaign_exposes_pending_escalation(tmp_path):
+    import asyncio
+
+    with _lab(tmp_path) as lab:
+        scheduler = CampaignScheduler(lab)
+        camp = Campaign(name="needs-human", objective=Objective(key="score"), budget=1)
+        await scheduler.submit(camp, _EscalatingPlanner(), priority=5)
+
+        async def resolve_when_visible() -> None:
+            for _ in range(200):
+                await asyncio.sleep(0.01)
+                pending = lab.pending_escalations(camp.id)
+                if pending:
+                    esc = pending[0]
+                    lab.resolve_escalation(
+                        camp.id,
+                        esc.id,
+                        EscalationResolution(
+                            escalation_id=esc.id,
+                            action="stop",
+                            reason="operator stopped the campaign",
+                        ),
+                    )
+                    return
+
+        resolver = asyncio.create_task(resolve_when_visible())
+        await scheduler.run()
+        await resolver
+
+        status = next(s for s in scheduler.status() if s["campaign_id"] == camp.id)
+        assert status["status"] == "stopped"
+        assert status["summary"]["status"] == "stopped"

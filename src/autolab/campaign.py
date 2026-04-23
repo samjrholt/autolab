@@ -293,7 +293,7 @@ class CampaignRunner:
                 continue
 
         for step, rec, gate in results:
-            if self._is_done():
+            if self._accepted is not None or self._stopped is not None:
                 break
             await self._react(step, rec, gate)
 

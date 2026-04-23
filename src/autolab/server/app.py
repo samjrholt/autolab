@@ -65,8 +65,8 @@ import json
 import logging
 import os
 import sys
-from contextlib import asynccontextmanager
-from datetime import datetime
+from contextlib import asynccontextmanager, suppress
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -98,6 +98,7 @@ from autolab.models import (
     EscalationResolution,
     Intervention,
     Objective,
+    OperationResult,
     ProposedStep,
     Resource,
     WorkflowStep,
@@ -281,10 +282,7 @@ def _bootstrap_superellipse(lab: Lab) -> None:
         # it against the running Lab so provenance sees the same hash the
         # CLI-driven run would produce.
         yaml_path = (
-            _Path(__file__).resolve().parents[3]
-            / "examples"
-            / "superellipse_sensor"
-            / "tool.yaml"
+            _Path(__file__).resolve().parents[3] / "examples" / "superellipse_sensor" / "tool.yaml"
         )
         lab.register_tool(yaml_path)
 
@@ -306,9 +304,8 @@ def _bootstrap_demo_quadratic(lab: Lab) -> None:
     """Trivial stub Operation. Opt-in only — not wired into the default Console
     viz routing. Use for clicking around when the real adapters are unavailable.
     """
-    from pydantic import BaseModel as _BM
+    from pydantic import BaseModel as PydanticBaseModel
 
-    from autolab.models import OperationResult
     from autolab.models import Resource as _Resource
     from autolab.operations.base import Operation
 
@@ -318,11 +315,11 @@ def _bootstrap_demo_quadratic(lab: Lab) -> None:
         module = "demo_quadratic.v1"
         typical_duration = 2
 
-        class Inputs(_BM):
+        class Inputs(PydanticBaseModel):
             x: float
             target: float = 0.5
 
-        class Outputs(_BM):
+        class Outputs(PydanticBaseModel):
             score: float
 
         async def run(self, inputs: dict[str, Any]) -> OperationResult:
@@ -412,19 +409,20 @@ def _ensure_repo_on_path() -> None:
 
 
 def _set_bootstrap_diagnostics(lab: Lab, *, mode: str, error: str | None = None) -> None:
-    setattr(
-        lab,
-        "_bootstrap_diagnostics",
-        {
-            "mode": mode,
-            "error": error,
-        },
-    )
+    lab._bootstrap_diagnostics = {  # type: ignore[attr-defined]
+        "mode": mode,
+        "error": error,
+    }
 
 
 def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
     _set_bootstrap_diagnostics(lab, mode=mode)
-    log.info("bootstrap mode: %r  (cwd=%s, sys.path[0]=%s)", mode, Path.cwd(), sys.path[0] if sys.path else "(empty)")
+    log.info(
+        "bootstrap mode: %r  (cwd=%s, sys.path[0]=%s)",
+        mode,
+        Path.cwd(),
+        sys.path[0] if sys.path else "(empty)",
+    )
     if mode in ("none", ""):
         # No default tools, no default workflows. "this-pc" is the only
         # default resource and is registered by _auto_register_this_pc()
@@ -438,7 +436,7 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
         try:
             _bootstrap_superellipse(lab)
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             log.warning("superellipse bootstrap failed (%s) — falling back to empty", exc)
             return
@@ -446,7 +444,7 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
         try:
             _bootstrap_mammos(lab)
             return
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             log.warning("mammos bootstrap failed (%s) — falling back to empty", exc)
             return
@@ -455,15 +453,17 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
             from examples.mammos_sensor.sensor_shape_opt_bootstrap import (
                 bootstrap as _sensor_shape_boot,
             )
+
             _sensor_shape_boot(lab)
             log.info(
                 "sensor_shape_opt bootstrap OK — tools=%s workflows=%s",
                 [d.capability for d in lab.tools.list()],
                 list(lab._workflows.keys()),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             import traceback as _tb
+
             log.error("sensor_shape_opt bootstrap FAILED — %s\n%s", exc, _tb.format_exc())
         return
     if mode == "all":
@@ -471,7 +471,7 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
         for name, fn in (("superellipse", _bootstrap_superellipse), ("mammos", _bootstrap_mammos)):
             try:
                 fn(lab)
-            except Exception as exc:  # noqa: BLE001
+            except Exception as exc:
                 log.warning("%s bootstrap failed (%s)", name, exc)
         return
     if mode == "demo_quadratic":
@@ -483,14 +483,16 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
     if mode == "add_demo":
         try:
             from examples.add_demo.bootstrap import bootstrap as _add_demo_boot
+
             _add_demo_boot(lab)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             log.warning("add_demo bootstrap failed (%s)", exc)
         return
     if mode == "wsl_ssh_demo":
         try:
             from examples.wsl_ssh_demo.bootstrap import bootstrap as _wsl_ssh_boot
+
             _wsl_ssh_boot(lab)
             log.info(
                 "wsl_ssh_demo bootstrap OK — resources=%s tools=%s workflows=%s",
@@ -498,14 +500,16 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
                 [d.capability for d in lab.tools.list()],
                 list(lab._workflows.keys()),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             import traceback as _tb
+
             log.error("wsl_ssh_demo bootstrap FAILED — %s\n%s", exc, _tb.format_exc())
         return
     if mode == "wsl_demo":
         try:
             from examples.wsl_demo.bootstrap import bootstrap as _wsl_demo_boot
+
             _wsl_demo_boot(lab)
             log.info(
                 "wsl_demo bootstrap OK — resources=%s tools=%s workflows=%s",
@@ -513,9 +517,10 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
                 [d.capability for d in lab.tools.list()],
                 list(lab._workflows.keys()),
             )
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             import traceback as _tb
+
             log.error("wsl_demo bootstrap FAILED — %s\n%s", exc, _tb.format_exc())
         return
     # Custom dotted path module:function
@@ -525,7 +530,7 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
         fn = getattr(module, attr)
         try:
             fn(lab)
-        except Exception as exc:  # noqa: BLE001
+        except Exception as exc:
             _set_bootstrap_diagnostics(lab, mode=mode, error=str(exc))
             raise
         return
@@ -628,35 +633,29 @@ async def lifespan(app: FastAPI):
     finally:
         log.info("autolab server shutting down...")
         # Close all WebSocket connections first — give clients a chance to disconnect cleanly.
-        await ws_manager.broadcast({"kind": "server.shutdown", "timestamp": datetime.utcnow().isoformat()})
+        await ws_manager.broadcast(
+            {"kind": "server.shutdown", "timestamp": datetime.now(UTC).isoformat()}
+        )
         await asyncio.sleep(0.1)  # Brief window for clients to acknowledge.
 
         # Cooperative cancellation of running campaigns.
         for cid, state in list(scheduler._campaigns.items()):
             if state.status in ("running", "paused", "queued"):
-                try:
+                with suppress(Exception):
                     await scheduler.cancel(cid)
-                except Exception:
-                    pass
 
         # Give the scheduler a bounded time to finish naturally.
-        try:
+        with suppress(TimeoutError, Exception):
             await asyncio.wait_for(sched_task, timeout=5.0)
-        except (asyncio.TimeoutError, Exception):
-            pass
 
         # Drain any in-flight Claude claim persistence before ledger closes.
-        try:
+        with suppress(TimeoutError, Exception):
             await asyncio.wait_for(drain_pending_claims(), timeout=3.0)
-        except (asyncio.TimeoutError, Exception):
-            pass
 
         # Forcefully cancel the event bridge.
         bridge.cancel()
-        try:
+        with suppress(Exception):
             await asyncio.wait_for(asyncio.shield(bridge), timeout=1.0)
-        except Exception:
-            pass
 
         # Close the lab (flushes SQLite, closes connections).
         lab.close()
@@ -710,6 +709,11 @@ async def status(request: Request) -> dict[str, Any]:
     scheduler = _scheduler(request)
     eng = EstimationEngine(lab)
     records = list(lab.ledger.iter_records())
+    escalations = [
+        esc.model_dump(mode="json")
+        for cid in scheduler._campaigns
+        for esc in lab.pending_escalations(cid)
+    ]
     counts = {"completed": 0, "failed": 0, "pending": 0, "running": 0, "soft_fail": 0}
     for r in records:
         if r.record_status in counts:
@@ -722,6 +726,7 @@ async def status(request: Request) -> dict[str, Any]:
         "resources": lab.resources.status(),
         "tools": [_tool_row(d) for d in lab.tools.list()],
         "campaigns": scheduler.status(),
+        "escalations": escalations,
         "workflows": [w.model_dump(mode="json") for w in lab._workflows.values()],
         # UI exposes only these two; example bootstraps may register more in
         # the registry but they stay out of the dropdown to keep the MVP focused.
@@ -830,12 +835,10 @@ async def register_simple_tool(body: dict[str, Any], request: Request) -> dict[s
     if "capability" not in body:
         raise HTTPException(400, "capability is required")
     if lab.tools.has(body["capability"]):
-        raise HTTPException(
-            400, f"tool {body['capability']!r} already registered"
-        )
+        raise HTTPException(400, f"tool {body['capability']!r} already registered")
     try:
         _register_dynamic_operation(lab, body)
-    except Exception as exc:  # noqa: BLE001 — surface a clean error
+    except Exception as exc:
         raise HTTPException(400, f"failed to register tool: {exc}") from exc
     return {"ok": True, "capability": body["capability"]}
 
@@ -881,7 +884,7 @@ async def run_workflow(name: str, body: WorkflowRunRequest, request: Request) ->
             input_overrides=body.input_overrides,
             max_parallel=body.max_parallel,
         )
-    except Exception as exc:  # noqa: BLE001 — surface a clean error
+    except Exception as exc:
         raise HTTPException(500, f"workflow failed: {exc!r}") from exc
     return {
         "ok": result.completed,
@@ -910,9 +913,7 @@ async def register_workflow(body: WorkflowRequest, request: Request) -> dict[str
             name=body.name,
             description=body.description,
             steps=steps,
-            acceptance=(
-                AcceptanceCriteria(**body.acceptance) if body.acceptance else None
-            ),
+            acceptance=(AcceptanceCriteria(**body.acceptance) if body.acceptance else None),
             typical_duration_s=body.typical_duration_s,
             metadata=body.metadata,
         )
@@ -955,8 +956,8 @@ def _make_planner(lab: Lab, kind: str, config: dict[str, Any], *, claude_policy:
             raise HTTPException(
                 400,
                 "Optuna planner requires a 'search_space' in planner_config. "
-                "Example: {\"operation\": \"my_op\", \"search_space\": {\"x\": "
-                "{\"type\": \"float\", \"low\": 0, \"high\": 10}}}",
+                'Example: {"operation": "my_op", "search_space": {"x": '
+                '{"type": "float", "low": 0, "high": 10}}}',
             )
         try:
             return build_planner("optuna", config)
@@ -967,7 +968,7 @@ def _make_planner(lab: Lab, kind: str, config: dict[str, Any], *, claude_policy:
     try:
         return build_planner(kind, config)
     except KeyError:
-        known = list_planners() + ["claude"]
+        known = [*list_planners(), "claude"]
         raise HTTPException(
             400,
             f"unknown planner {kind!r}. Supported: {sorted(set(known))}",
@@ -1004,12 +1005,11 @@ async def submit_campaign(body: CampaignRequest, request: Request) -> dict[str, 
     )
     await scheduler.submit(campaign, planner, priority=body.priority)
     state = scheduler._campaigns[campaign.id]
-    if body.autostart:
+    if body.autostart and state._task is None:
         # If a scheduler loop is already running, _launch() will pick up the new
         # state on the next tick. But if the user just booted the server, the
         # scheduler.run() task may have already exited (no work). Relaunch if so.
-        if state._task is None:
-            scheduler._launch(state)
+        scheduler._launch(state)
     # autostart=False → leave the campaign in "queued" status. The Console
     # starts it later via POST /campaigns/{id}/start.
     return {
@@ -1223,6 +1223,7 @@ async def apply_lab_setup(body: LabSetupApplyRequest, request: Request) -> dict[
             lab.register_resource(resource)
             registered_resources.append(r["name"])
             from autolab.events import Event
+
             lab.events.publish(Event(kind="resource.registered", payload={"name": resource.name}))
         except Exception as exc:
             errors.append(f"resource {r.get('name', '?')}: {exc}")
@@ -1256,7 +1257,7 @@ async def apply_bootstrap(body: BootstrapApplyRequest, request: Request) -> dict
     before_workflows = set(lab._workflows.keys())
     try:
         _apply_bootstrap_mode(lab, body.mode)
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
 
     after_resources = {r.name for r in lab.resources.list()}
@@ -1310,6 +1311,7 @@ def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
 
     async def _run(self: Any, inputs: dict[str, Any], context: OperationContext) -> OperationResult:
         import random
+
         await asyncio.sleep(0.3 + random.random() * 0.4)
         # Generate stub outputs matching the declared schema
         outputs: dict[str, Any] = {}
@@ -1357,13 +1359,11 @@ async def list_escalations(request: Request) -> list[dict[str, Any]]:
                 "context": esc.context,
             }
             # Attach the triggering record's outputs for image preview
-            try:
+            with suppress(Exception):
                 rec = lab.ledger.get(esc.record_id)
                 if rec:
                     row["operation"] = rec.operation
                     row["outputs"] = rec.outputs
-            except Exception:  # noqa: BLE001
-                pass
             out.append(row)
     return out
 
@@ -1491,24 +1491,20 @@ async def annotate_record(
     )
     try:
         await lab.annotate(ann)
-    except Exception as exc:  # noqa: BLE001 — bubble up with a friendly status
+    except Exception as exc:
         raise HTTPException(400, str(exc)) from exc
     return {"ok": True, "annotation_id": ann.id}
 
 
 @app.get("/export/ro-crate")
-async def export_ro_crate(
-    request: Request, campaign_id: str | None = None
-) -> dict[str, Any]:
+async def export_ro_crate(request: Request, campaign_id: str | None = None) -> dict[str, Any]:
     from autolab.export import to_ro_crate
 
     return to_ro_crate(_lab(request), campaign_id=campaign_id)
 
 
 @app.get("/export/prov")
-async def export_prov(
-    request: Request, campaign_id: str | None = None
-) -> dict[str, Any]:
+async def export_prov(request: Request, campaign_id: str | None = None) -> dict[str, Any]:
     from autolab.export import to_prov
 
     return to_prov(_lab(request), campaign_id=campaign_id)
@@ -1540,7 +1536,8 @@ async def debug_bootstrap(request: Request) -> dict[str, Any]:
     lab = _lab(request)
     diag = getattr(lab, "_bootstrap_diagnostics", {})
     return {
-        "bootstrap_mode": diag.get("mode") or os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic (default)"),
+        "bootstrap_mode": diag.get("mode")
+        or os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic (default)"),
         "bootstrap_error": diag.get("error"),
         "cwd": str(Path.cwd()),
         "examples_on_path": any("autolab" in p for p in sys.path),
