@@ -213,14 +213,75 @@ def _offline_response(system: str, user: str) -> str:
             }
         )
     if "lab setup" in lowered or "lab_setup_designer" in lowered or "scientist description" in lowered:
+        scientist_text = lowered.split("scientist description (verbatim):", 1)[-1]
+        scientist_text = scientist_text.split("already registered", 1)[0]
+        vague_setup = (
+            "set up a lab" in scientist_text
+            or "setup a lab" in scientist_text
+            or "new lab" in scientist_text
+        ) and not any(
+            term in scientist_text
+            for term in (
+                "host",
+                "computer",
+                "script",
+                "instrument",
+                "furnace",
+                "xrd",
+                "magnet",
+                "simulation",
+                "simulator",
+                "equipment",
+            )
+        )
+        if vague_setup:
+            return json.dumps(
+                {
+                    "resources": [],
+                    "operations": [],
+                    "workflow": None,
+                    "questions": [
+                        "What equipment or compute resources should autolab use?",
+                        "What operation should the lab be able to run first?",
+                        "What output should be optimised or checked?",
+                    ],
+                    "ready_to_apply": False,
+                    "notes": "I need concrete resources, operations, and desired outputs before I can register a useful setup.",
+                }
+            )
         return json.dumps(
             {
                 "resources": [
-                    {"name": "computer-1", "kind": "computer", "capabilities": {}, "description": "Local workstation"},
+                    {
+                        "name": "local-workstation",
+                        "kind": "computer",
+                        "capabilities": {"backend": "local"},
+                        "description": "Local workstation for running scripts and simulations.",
+                        "typical_operation_durations": {"run_simulation": 5},
+                    },
                 ],
-                "operations": [],
-                "workflow": None,
-                "notes": "Anthropic API key not configured; returning a minimal stub. Set ANTHROPIC_API_KEY for real setup assistance.",
+                "operations": [
+                    {
+                        "capability": "run_simulation",
+                        "resource_kind": "computer",
+                        "description": "Run a local simulation script and collect a numeric score.",
+                        "inputs": {"x": "float"},
+                        "outputs": {"score": "float"},
+                        "produces_sample": False,
+                        "destructive": False,
+                        "typical_duration_s": 5,
+                    }
+                ],
+                "workflow": {
+                    "name": "simulation-workflow",
+                    "description": "Run the local simulation and record the score.",
+                    "steps": [
+                        {"step_id": "simulate", "operation": "run_simulation", "depends_on": []}
+                    ],
+                },
+                "questions": [],
+                "ready_to_apply": True,
+                "notes": "Offline setup draft generated from the lab description.",
             }
         )
     if "resource designer" in lowered or "resource_designer" in lowered:
@@ -846,11 +907,20 @@ Reply with a single compact JSON object:
         {"step_id": "s2", "operation": "sintering", "depends_on": ["s1"]}
       ]
     },
+    "questions": [
+      "What temperature range should the furnace support?"
+    ],
+    "ready_to_apply": false,
     "notes": "Short rationale for the scientist"
   }
 
 Rules:
 - Use scientist-friendly capability names (weighing, sintering, xrd, magnetometry — not library names).
+- If required information is missing, ask concise questions in `questions`,
+  set `ready_to_apply` false, and only include proposals you can defend from
+  the scientist's description.
+- Required setup information is: concrete resources, the first operation(s) to
+  run, and the outputs those operations produce.
 - Resource names should be specific instances (tube-furnace-A, squid-1, xrd-1).
 - Resource kinds should be generic categories (furnace, magnetometer, diffractometer, balance, ball_mill, computer).
 - Each operation should map to exactly one real lab step a scientist would recognise.
@@ -867,6 +937,8 @@ class LabSetupResult:
     resources: list[dict[str, Any]]
     operations: list[dict[str, Any]]
     workflow: dict[str, Any] | None
+    questions: list[str]
+    ready_to_apply: bool
     notes: str
     raw: ClaudeResponse
 
@@ -906,6 +978,8 @@ class LabSetupDesigner:
             resources=list(data.get("resources") or []),
             operations=list(data.get("operations") or []),
             workflow=dict(data["workflow"]) if data.get("workflow") else None,
+            questions=[str(q) for q in data.get("questions") or []],
+            ready_to_apply=bool(data.get("ready_to_apply", True)),
             notes=str(data.get("notes") or ""),
             raw=resp,
         )

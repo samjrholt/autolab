@@ -31,7 +31,7 @@ function MessageBubble({ role, children }) {
   );
 }
 
-function ProposalCard({ title, items, onApprove, approving, approved }) {
+function ProposalCard({ title, items }) {
   if (!items || items.length === 0) return null;
   return (
     <div className="card" style={{ padding: 12, marginBottom: 10 }}>
@@ -49,7 +49,7 @@ function ProposalCard({ title, items, onApprove, approving, approved }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {items.map((item, i) => (
           <div
-            key={i}
+            key={item.name || item.capability || i}
             style={{
               background: "var(--color-panel)",
               border: "1px solid var(--color-line)",
@@ -61,7 +61,9 @@ function ProposalCard({ title, items, onApprove, approving, approved }) {
             }}
           >
             {item.name ? <strong style={{ color: "var(--color-text)" }}>{item.name}</strong> : null}
-            {item.name && item.kind ? <span style={{ color: "var(--color-secondary)" }}> · {item.kind}</span> : null}
+            {item.name && item.kind ? <span style={{ color: "var(--color-secondary)" }}> - {item.kind}</span> : null}
+            {item.capability ? <strong style={{ color: "var(--color-text)" }}>{item.capability}</strong> : null}
+            {item.resource_kind ? <span style={{ color: "var(--color-secondary)" }}> - {item.resource_kind}</span> : null}
             {item.description ? (
               <div style={{ marginTop: 3, color: "var(--color-muted)", fontFamily: "var(--font-sans)" }}>
                 {item.description}
@@ -70,17 +72,6 @@ function ProposalCard({ title, items, onApprove, approving, approved }) {
           </div>
         ))}
       </div>
-      {onApprove ? (
-        <div style={{ marginTop: 10 }}>
-          {approved ? (
-            <span style={{ color: "var(--color-status-green)", fontSize: 12 }}>✓ Registered</span>
-          ) : (
-            <button type="button" disabled={approving} onClick={onApprove} className="btn-primary">
-              {approving ? "Registering…" : "Register these"}
-            </button>
-          )}
-        </div>
-      ) : null}
     </div>
   );
 }
@@ -90,7 +81,7 @@ export default function AssistantPage({ status, refresh }) {
     {
       role: "assistant",
       content:
-        "Hi — I'm Claude running inside autolab. Tell me about the compute and equipment you have, and any goal you're working toward. I'll propose resources and capabilities and we'll walk through setting them up together.",
+        "Hi - I'm Claude running inside autolab. Tell me about the compute and equipment you have, and any goal you're working toward. I'll ask for missing details, then propose resources, capabilities, and workflows for you to approve.",
     },
   ]);
   const [input, setInput] = useState("");
@@ -124,15 +115,35 @@ export default function AssistantPage({ status, refresh }) {
     try {
       const result = await postJson("/lab/setup", { text });
       setProposal(result);
+      setRegistered(false);
+
+      if (result.questions?.length) {
+        const questions = result.questions.map((q) => `- ${q}`).join("\n");
+        const notes = result.notes ? `\n\n${result.notes}` : "";
+        setMessages((m) => [
+          ...m,
+          {
+            role: "assistant",
+            content: `I need a few details before registering anything:\n${questions}${notes}`,
+          },
+        ]);
+        return;
+      }
+
       const summaryBits = [];
-      if (result.resources?.length) summaryBits.push(`${result.resources.length} resource${result.resources.length === 1 ? "" : "s"}`);
-      if (result.operations?.length) summaryBits.push(`${result.operations.length} capabilit${result.operations.length === 1 ? "y" : "ies"}`);
+      if (result.resources?.length) {
+        summaryBits.push(`${result.resources.length} resource${result.resources.length === 1 ? "" : "s"}`);
+      }
+      if (result.operations?.length) {
+        summaryBits.push(`${result.operations.length} capabilit${result.operations.length === 1 ? "y" : "ies"}`);
+      }
+      if (result.workflow) summaryBits.push("1 workflow");
+
       const summary = summaryBits.length
-        ? `I've drafted ${summaryBits.join(" and ")}. Review them below and approve if they look right — or tell me what to change.`
+        ? `I've drafted ${summaryBits.join(" and ")}. Review them below and approve if they look right, or tell me what to change.`
         : "I couldn't draft anything concrete from that. Can you tell me about the specific hosts or instruments you have?";
       const notes = result.notes ? `\n\n${result.notes}` : "";
       setMessages((m) => [...m, { role: "assistant", content: summary + notes }]);
-      setRegistered(false);
     } catch (err) {
       setMessages((m) => [
         ...m,
@@ -154,7 +165,7 @@ export default function AssistantPage({ status, refresh }) {
         {
           role: "assistant",
           content:
-            "Done — everything is registered. You can now start a campaign that uses these resources and capabilities from the Campaigns page.",
+            "Done - everything is registered. You can now start a campaign that uses these resources, capabilities, and workflows from the Campaigns page.",
         },
       ]);
       if (refresh) await refresh();
@@ -165,11 +176,13 @@ export default function AssistantPage({ status, refresh }) {
     }
   };
 
+  const hasConcreteProposal = Boolean(proposal?.resources?.length || proposal?.operations?.length || proposal?.workflow);
+
   return (
     <>
       <PageHeader
         title="Setup Assistant"
-        description="Describe your lab in natural language. Claude proposes resources and capabilities; nothing registers without your approval."
+        description="Describe your lab in natural language. Claude asks for missing details, then proposes setup changes for approval."
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 16, alignItems: "flex-start" }}>
@@ -182,7 +195,7 @@ export default function AssistantPage({ status, refresh }) {
             ))}
             {busy ? (
               <MessageBubble role="assistant">
-                <span style={{ color: "var(--color-tertiary)" }}>…thinking</span>
+                <span style={{ color: "var(--color-tertiary)" }}>...thinking</span>
               </MessageBubble>
             ) : null}
           </div>
@@ -198,7 +211,7 @@ export default function AssistantPage({ status, refresh }) {
             <textarea
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="I have a WSL host at localhost and a script in ~/code/my-sim that I run via pixi…"
+              placeholder="I have a WSL host at localhost and a script in ~/code/my-sim that I run via pixi..."
               disabled={busy}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
@@ -237,14 +250,34 @@ export default function AssistantPage({ status, refresh }) {
           </div>
           {proposal ? (
             <>
-              <ProposalCard
-                title="Resources"
-                items={proposal.resources || []}
-                onApprove={proposal.resources?.length ? registerProposal : undefined}
-                approving={registering}
-                approved={registered}
-              />
+              <ProposalCard title="Resources" items={proposal.resources || []} />
               <ProposalCard title="Capabilities" items={proposal.operations || []} />
+              <ProposalCard title="Workflow" items={proposal.workflow ? [proposal.workflow] : []} />
+              {proposal.questions?.length ? (
+                <div className="card" style={{ padding: 14, fontSize: 12, color: "var(--color-secondary)" }}>
+                  {proposal.questions.map((q) => (
+                    <div key={q} style={{ marginBottom: 6 }}>
+                      {q}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+              {hasConcreteProposal ? (
+                <div>
+                  {registered ? (
+                    <span style={{ color: "var(--color-status-green)", fontSize: 12 }}>Registered</span>
+                  ) : (
+                    <button
+                      type="button"
+                      disabled={registering || proposal.ready_to_apply === false}
+                      onClick={registerProposal}
+                      className="btn-primary"
+                    >
+                      {registering ? "Registering..." : "Register setup"}
+                    </button>
+                  )}
+                </div>
+              ) : null}
             </>
           ) : (
             <div className="card" style={{ padding: 14, fontSize: 12, color: "var(--color-secondary)" }}>

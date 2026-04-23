@@ -54,6 +54,7 @@ export default defineConfig({
         AUTOLAB_ROOT: e2eRoot,
         AUTOLAB_BOOTSTRAP: "demo_quadratic",
         AUTOLAB_CLAUDE_OFFLINE: "1",
+        ANTHROPIC_API_KEY: "offline-e2e-key",
       },
       reuseExistingServer: false,
       timeout: 30_000,

@@ -197,6 +197,7 @@ class LabSetupRequest(BaseModel):
 class LabSetupApplyRequest(BaseModel):
     resources: list[dict[str, Any]] = Field(default_factory=list)
     operations: list[dict[str, Any]] = Field(default_factory=list)
+    workflow: dict[str, Any] | None = None
 
 
 class BootstrapApplyRequest(BaseModel):
@@ -1546,6 +1547,8 @@ async def design_lab_setup(body: LabSetupRequest, request: Request) -> dict[str,
         "resources": result.resources,
         "operations": result.operations,
         "workflow": result.workflow,
+        "questions": result.questions,
+        "ready_to_apply": result.ready_to_apply,
         "notes": result.notes,
         "model": result.raw.model,
         "offline": result.raw.offline,
@@ -1612,6 +1615,7 @@ async def apply_lab_setup(body: LabSetupApplyRequest, request: Request) -> dict[
     lab = _lab(request)
     registered_resources = []
     registered_operations = []
+    registered_workflows = []
     errors = []
 
     for r in body.resources:
@@ -1638,10 +1642,32 @@ async def apply_lab_setup(body: LabSetupApplyRequest, request: Request) -> dict[
         except Exception as exc:
             errors.append(f"operation {op.get('capability', '?')}: {exc}")
 
+    if body.workflow:
+        try:
+            steps = [WorkflowStep(**s) for s in body.workflow.get("steps", [])]
+            workflow = WorkflowTemplate(
+                name=body.workflow["name"],
+                description=body.workflow.get("description"),
+                steps=steps,
+                acceptance=(
+                    AcceptanceCriteria(**body.workflow["acceptance"])
+                    if body.workflow.get("acceptance")
+                    else None
+                ),
+                typical_duration_s=body.workflow.get("typical_duration_s"),
+                metadata=body.workflow.get("metadata", {}),
+            )
+            lab.register_workflow(workflow)
+            registered_workflows.append(workflow.name)
+            lab.events.publish(Event(kind="workflow.registered", payload={"name": workflow.name}))
+        except Exception as exc:
+            errors.append(f"workflow {body.workflow.get('name', '?')}: {exc}")
+
     return {
         "ok": len(errors) == 0,
         "registered_resources": registered_resources,
         "registered_operations": registered_operations,
+        "registered_workflows": registered_workflows,
         "errors": errors,
     }
 

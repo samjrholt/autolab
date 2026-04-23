@@ -119,6 +119,48 @@ def test_designer_offline(client):
     assert "name" in body["campaign"]
 
 
+def test_lab_setup_asks_questions_before_proposal(client):
+    r = client.post("/lab/setup", json={"text": "I want to set up a lab"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["offline"] is True
+    assert body["ready_to_apply"] is False
+    assert body["questions"]
+    assert body["resources"] == []
+    assert body["operations"] == []
+
+
+def test_lab_setup_apply_registers_resources_tools_and_workflow(client):
+    draft = client.post(
+        "/lab/setup",
+        json={
+            "text": (
+                "I have a local computer and a simulation script. "
+                "Run it with x and collect a score."
+            )
+        },
+    )
+    assert draft.status_code == 200
+    body = draft.json()
+    assert body["ready_to_apply"] is True
+    assert body["resources"]
+    assert body["operations"]
+    assert body["workflow"]
+
+    applied = client.post("/lab/setup/apply", json=body)
+    assert applied.status_code == 200
+    applied_body = applied.json()
+    assert applied_body["ok"] is True
+    assert "local-workstation" in applied_body["registered_resources"]
+    assert "run_simulation" in applied_body["registered_operations"]
+    assert "simulation-workflow" in applied_body["registered_workflows"]
+
+    status = client.get("/status").json()
+    assert any(r["name"] == "local-workstation" for r in status["resources"])
+    assert any(t["capability"] == "run_simulation" for t in status["tools"])
+    assert any(w["name"] == "simulation-workflow" for w in status["workflows"])
+
+
 def test_analysis_query_offline(client):
     r = client.post(
         "/analysis/query",
