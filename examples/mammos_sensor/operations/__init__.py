@@ -1,29 +1,33 @@
 """MaMMoS demonstrator operations.
 
-Material-parameter operations (reusable for any candidate magnetic material):
+Two workflow shapes share these Operations:
 
-- :class:`StructureRelax`
-- :class:`IntrinsicMagnetics0K`
-- :class:`FiniteTemperatureMagnetics`
+- **Sensor shape-opt demo** (the MVP hackathon path). Two Operations
+  that mirror the `MaMMoS sensor demonstrator
+  <https://mammos-project.github.io/mammos/demonstrator/sensor.html>`_
+  page verbatim:
 
-Sensor-specific operations:
+  - :class:`SensorMaterialAtT` — Ms(T) + A(T) from the mammos-spindynamics
+    DB with Kuzmin fit.
+  - :class:`SensorShapeFOM` — superellipse mesh + OOMMF hysteresis loop +
+    linear-segment analysis → Hmax (sensor FOM).
 
-- :class:`SensorMesh`
-- :class:`MicromagneticHysteresis`
-- :class:`SensorFigureOfMerit`
+- **Full materials chain** (retained for the 6-step multiscale
+  demonstrator). Run material design from composition up:
 
-Each operation follows a consistent pattern:
+  - :class:`StructureRelax`
+  - :class:`IntrinsicMagnetics0K`
+  - :class:`FiniteTemperatureMagnetics`
+  - :class:`SensorMesh`
+  - :class:`MicromagneticHysteresis`
+  - :class:`SensorFigureOfMerit`
 
-1. Declare a Pydantic ``Inputs`` and ``Outputs`` inner model so the
-   schema is derived (not hand-authored) and the DatasetBuilder gets
-   stable column names.
-2. Dispatch to a ``mammos`` backend inside the VM when available; fall
-   back to a labelled surrogate when not.
-3. Stamp ``outputs["backend"]`` with the backend that actually ran so
-   every Record carries a visible provenance breadcrumb — the framework
-   invariant *"surrogates are never silently substituted"*.
-4. Map VM-level failures to ``failure_mode="equipment_failure"`` and
-   script-level failures to ``failure_mode="process_deviation"``.
+Each Operation dispatches to a real backend inside the VM (``mammos-*``,
+``ubermag``, OOMMF). When the VM-side script fails because the real
+backend isn't installed, strict mode (default) returns a failed Record
+with an actionable setup hint — **no silent surrogate substitution**.
+Set ``AUTOLAB_MAMMOS_ALLOW_SURROGATE=1`` to opt back in to the closed-form
+fallbacks for CI / offline use.
 """
 
 from __future__ import annotations
@@ -38,14 +42,22 @@ from examples.mammos_sensor.operations.sensor import (
     SensorFigureOfMerit,
     SensorMesh,
 )
+from examples.mammos_sensor.operations.sensor_demo import (
+    SensorMaterialAtT,
+    SensorShapeFOM,
+)
 
 ALL_OPERATIONS = (
+    # Full materials chain (6 steps)
     StructureRelax,
     IntrinsicMagnetics0K,
     FiniteTemperatureMagnetics,
     SensorMesh,
     MicromagneticHysteresis,
     SensorFigureOfMerit,
+    # Sensor shape-opt demo (2 steps)
+    SensorMaterialAtT,
+    SensorShapeFOM,
 )
 
 __all__ = [
@@ -54,6 +66,8 @@ __all__ = [
     "IntrinsicMagnetics0K",
     "MicromagneticHysteresis",
     "SensorFigureOfMerit",
+    "SensorMaterialAtT",
     "SensorMesh",
+    "SensorShapeFOM",
     "StructureRelax",
 ]

@@ -40,6 +40,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from autolab.models import OperationResult, Sample
 from autolab.operations.base import Operation, OperationContext
 
+from examples.mammos_sensor._strict import strict_failure, strict_mode
 from examples.mammos_sensor.vm import (
     ScriptError,
     VMError,
@@ -118,8 +119,9 @@ class StructureRelax(Operation):
                 error=f"VM unreachable during structure relaxation: {exc}",
                 failure_mode="equipment_failure",
             )
-        except ScriptError:
-            # Real backend not present or failed inside VM — fall through to surrogate.
+        except ScriptError as exc:
+            if strict_mode():
+                return strict_failure("StructureRelax", exc)
             result = _surrogate_relax(parsed)
             backend = "surrogate"
 
@@ -204,7 +206,9 @@ class IntrinsicMagnetics0K(Operation):
                 error=f"VM unreachable during intrinsic magnetics: {exc}",
                 failure_mode="equipment_failure",
             )
-        except ScriptError:
+        except ScriptError as exc:
+            if strict_mode():
+                return strict_failure("IntrinsicMagnetics0K", exc)
             result = _surrogate_intrinsic(parsed)
             backend = "surrogate"
 
@@ -278,7 +282,9 @@ class FiniteTemperatureMagnetics(Operation):
                 error=f"VM unreachable during finite-T magnetics: {exc}",
                 failure_mode="equipment_failure",
             )
-        except ScriptError:
+        except ScriptError as exc:
+            if strict_mode():
+                return strict_failure("FiniteTemperatureMagnetics", exc)
             result = _surrogate_finite_t(parsed)
             backend = "surrogate"
 

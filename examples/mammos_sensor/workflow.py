@@ -154,4 +154,74 @@ def default_input_overrides(
     }
 
 
-__all__ = ["MAMMOS_SENSOR_WORKFLOW", "default_input_overrides"]
+SENSOR_SHAPE_OPT_WORKFLOW = WorkflowTemplate(
+    name="sensor_shape_opt",
+    description=(
+        "Sensor shape optimisation — direct port of the MaMMoS sensor "
+        "demonstrator page. Material lookup (Ms(T), A(T) from "
+        "mammos-spindynamics + Kuzmin fit) flows into a single sensor "
+        "simulation step (superellipse mesh + OOMMF hysteresis + "
+        "linear-segment FOM). The shape parameters (sx_nm, sy_nm) are the "
+        "optimiser's knobs; Hmax_A_per_m is the objective."
+    ),
+    typical_duration_s=3 * 60,  # ~3 min with a modest (21,21) field sweep on WSL
+    steps=[
+        WorkflowStep(
+            step_id="material",
+            operation="mammos.sensor_material_at_T",
+            inputs={},  # material, temperature_K come from campaign input_overrides
+        ),
+        WorkflowStep(
+            step_id="fom",
+            operation="mammos.sensor_shape_fom",
+            depends_on=["material"],
+            input_mappings={
+                "Ms_A_per_m": "material.Ms_A_per_m",
+                "A_J_per_m": "material.A_J_per_m",
+            },
+        ),
+    ],
+)
+
+
+def default_sensor_shape_overrides(
+    *,
+    material: str = "Ni80Fe20",
+    temperature_K: float = 300.0,
+    sx_nm: float = 40.0,
+    sy_nm: float = 30.0,
+    n_exp: float = 2.0,
+    thickness_nm: float = 5.0,
+    region_L_nm: float = 100.0,
+    mesh_n: int = 40,
+    H_max_mT: float = 500.0,
+    n_steps: int = 101,
+) -> dict[str, dict[str, object]]:
+    """Inputs for one trial of :data:`SENSOR_SHAPE_OPT_WORKFLOW`.
+
+    The optimiser typically varies ``sx_nm`` and ``sy_nm`` (shape knobs);
+    everything else is fixed per the sensor demonstrator defaults. A
+    campaign's Planner calls this and merges its own trial-specific
+    overrides on top.
+    """
+    return {
+        "material": {"material": material, "temperature_K": temperature_K},
+        "fom": {
+            "sx_nm": sx_nm,
+            "sy_nm": sy_nm,
+            "n_exp": n_exp,
+            "thickness_nm": thickness_nm,
+            "region_L_nm": region_L_nm,
+            "mesh_n": mesh_n,
+            "H_max_mT": H_max_mT,
+            "n_steps": n_steps,
+        },
+    }
+
+
+__all__ = [
+    "MAMMOS_SENSOR_WORKFLOW",
+    "SENSOR_SHAPE_OPT_WORKFLOW",
+    "default_input_overrides",
+    "default_sensor_shape_overrides",
+]

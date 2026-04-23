@@ -178,6 +178,7 @@ export default function App() {
           onEdit={() =>
             navigate({ page: "designer", kind: "workflow", editing: selectedWorkflow })
           }
+          refresh={refresh}
         />
       );
     }

@@ -23,7 +23,10 @@ from autolab.models import Resource
 
 from examples.mammos_sensor.operations import ALL_OPERATIONS
 from examples.mammos_sensor.vm import VMExecutor, probe_vm
-from examples.mammos_sensor.workflow import MAMMOS_SENSOR_WORKFLOW
+from examples.mammos_sensor.workflow import (
+    MAMMOS_SENSOR_WORKFLOW,
+    SENSOR_SHAPE_OPT_WORKFLOW,
+)
 
 
 def bootstrap(lab: Lab) -> None:
@@ -62,8 +65,12 @@ def bootstrap(lab: Lab) -> None:
         ctx.metadata.setdefault("vm_executor", vm)
 
     lab.orchestrator.add_pre_hook(_attach_vm)
+    # Primary MVP workflow: sensor shape-opt demo (2 steps, real ubermag+OOMMF).
+    lab.register_workflow(SENSOR_SHAPE_OPT_WORKFLOW)
+    # Full materials chain also available for the full multiscale story.
     lab.register_workflow(MAMMOS_SENSOR_WORKFLOW)
     print(
         f"[mammos bootstrap] VM reachable={probe.get('reachable', False)} "
-        f"registered {len(ALL_OPERATIONS)} ops, workflow '{MAMMOS_SENSOR_WORKFLOW.name}'"
+        f"registered {len(ALL_OPERATIONS)} ops, workflows "
+        f"{[SENSOR_SHAPE_OPT_WORKFLOW.name, MAMMOS_SENSOR_WORKFLOW.name]}"
     )

@@ -36,6 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from autolab.models import OperationResult, Sample
 from autolab.operations.base import Operation, OperationContext
 
+from examples.mammos_sensor._strict import strict_failure, strict_mode
 from examples.mammos_sensor.operations.material import _executor_from_ctx
 from examples.mammos_sensor.vm import ScriptError, VMError
 
@@ -102,7 +103,9 @@ class SensorMesh(Operation):
                 error=f"VM unreachable during mesh generation: {exc}",
                 failure_mode="equipment_failure",
             )
-        except ScriptError:
+        except ScriptError as exc:
+            if strict_mode():
+                return strict_failure("SensorMesh", exc)
             result = _surrogate_mesh(parsed)
             backend = "surrogate"
 
@@ -199,7 +202,9 @@ class MicromagneticHysteresis(Operation):
                 error=f"VM unreachable during hysteresis simulation: {exc}",
                 failure_mode="equipment_failure",
             )
-        except ScriptError:
+        except ScriptError as exc:
+            if strict_mode():
+                return strict_failure("MicromagneticHysteresis", exc)
             result = _surrogate_hysteresis(parsed)
             backend = "surrogate"
 

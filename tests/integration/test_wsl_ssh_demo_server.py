@@ -38,12 +38,19 @@ def test_wsl_resource_metadata_visible_in_status(http_client):
 
 
 def test_wsl_workflow_and_planner_visible_in_status(http_client):
+    # planners_available is now hardcoded to the UI's shipped set (optuna,
+    # claude); example-specific planners stay in the Python registry but are
+    # not surfaced in the campaign dropdown. The wsl_ssh demo planner is
+    # still runnable via direct API submission.
+    from autolab.planners.registry import list_planners
+
     body = http_client.get("/status").json()
     workflows = [workflow["name"] for workflow in body["workflows"]]
     tools = [tool["capability"] for tool in body["tools"]]
-    planners = body["planners_available"]
+    planners_ui = body["planners_available"]
 
     assert "add_two_then_cube" in workflows
     assert "add_two" in tools
     assert "cube" in tools
-    assert "wsl_ssh_add_cube_optuna" in planners
+    assert set(planners_ui) == {"optuna", "claude"}
+    assert "wsl_ssh_add_cube_optuna" in list_planners()

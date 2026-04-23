@@ -24,7 +24,10 @@ def http_client(tmp_path, monkeypatch):
 
 def test_apply_add_demo_bootstrap_to_running_lab(http_client):
     before = http_client.get("/status").json()
-    assert before["resources"] == []
+    # Every lab auto-registers "this-pc" — it is always present, even under
+    # AUTOLAB_BOOTSTRAP=none. No other resources before the add_demo apply.
+    before_names = {r["name"] for r in before["resources"]}
+    assert before_names == {"this-pc"}
     assert before["workflows"] == []
 
     applied = http_client.post("/bootstraps/apply", json={"mode": "add_demo"})

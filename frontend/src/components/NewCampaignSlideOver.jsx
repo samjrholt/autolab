@@ -8,52 +8,22 @@ import RefinementPrompt from "./shared/RefinementPrompt";
 import { postJson } from "../lib/api";
 import { fadeInUp, stagger } from "../lib/motion";
 
-const BUILTIN_PLANNER_OPTIONS = {
-  heuristic: { value: "heuristic", label: "Heuristic", desc: "Simple rule-based planner — good for fixed workflows" },
-  bo: { value: "bo", label: "Bayesian Optimisation", desc: "GP-EI via Optuna — best for continuous parameter spaces" },
-  optuna: { value: "optuna", label: "Optuna", desc: "Tree-structured Parzen estimator — flexible sampler" },
-  add_demo_optuna: {
-    value: "add_demo_optuna",
-    label: "add_demo (Optuna + workflow chain)",
-    desc: "Chains add_two → add_three; optimises x in [0,10]. Used for the add_demo example.",
+// UI exposes exactly two planners. Keep this in lockstep with
+// server/app.py:_make_planner and /status.planners_available.
+const PLANNER_OPTIONS = [
+  {
+    value: "optuna",
+    label: "Optuna",
+    desc: "Tree-structured Parzen / GP / CMA-ES samplers. Best when you can define a numeric search space up-front.",
   },
-  wsl_ssh_add_cube_optuna: {
-    value: "wsl_ssh_add_cube_optuna",
-    label: "WSL SSH add→cube",
-    desc: "Runs add_two and cube remotely over ssh on WSL2, maximising (x + 2)^3 for x in [0,10].",
+  {
+    value: "claude",
+    label: "Claude (LLM)",
+    desc: "Opus 4.7 reasons about history and proposes the next step. Best for exploratory campaigns where the next move isn't a clean optimisation.",
   },
-  claude: { value: "claude", label: "Claude (LLM)", desc: "Opus 4.7 as planner — adaptive, vision-capable, best for exploratory campaigns" },
-};
+];
 
 const OPERATORS = [">=", "<=", ">", "<", "==", "in", "not_in"];
-
-function fallbackPlannerLabel(value) {
-  return value
-    .split(/[_-]+/)
-    .filter(Boolean)
-    .map((part) => part[0].toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
-function plannerOptionsFor(planners) {
-  const ordered = [];
-  const seen = new Set();
-  for (const value of planners || []) {
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    ordered.push(
-      BUILTIN_PLANNER_OPTIONS[value] || {
-        value,
-        label: fallbackPlannerLabel(value),
-        desc: "Custom planner registered on this lab.",
-      },
-    );
-  }
-  if (!seen.has("heuristic")) {
-    ordered.unshift(BUILTIN_PLANNER_OPTIONS.heuristic);
-  }
-  return ordered;
-}
 
 function AcceptanceCriteriaBuilder({ rules, onChange }) {
   const addRule = () => onChange([...rules, { key: "", op: ">=", value: "" }]);
@@ -90,6 +60,65 @@ function rulesToAcceptance(rules) {
   return Object.keys(acc).length > 0 ? { rules: acc } : undefined;
 }
 
+// --- Optuna search-space builder -------------------------------------------
+// Collects N rows of {name, type, low, high} (or choices for categorical) and
+// serialises to the dict shape OptunaConfig.search_space expects.
+
+function OptunaSearchSpaceBuilder({ params, onChange }) {
+  const addParam = () => onChange([...params, { name: "", type: "float", low: "0", high: "1", log: false, choices: "" }]);
+  const removeParam = (i) => onChange(params.filter((_, j) => j !== i));
+  const update = (i, field, val) => onChange(params.map((p, j) => j === i ? { ...p, [field]: val } : p));
+
+  return (
+    <div>
+      <div className="flex items-center justify-between mb-1">
+        <span className="text-[11px] text-[var(--color-secondary)] uppercase tracking-[0.15em]">Search space</span>
+        <button type="button" onClick={addParam} className="text-[11px] text-[var(--color-tertiary)] hover:text-white transition-colors bg-transparent border-none p-0">+ Add parameter</button>
+      </div>
+      {params.length === 0 && (
+        <p className="text-[11px] text-[var(--color-tertiary)] italic mb-1">Add at least one parameter for Optuna to optimise over.</p>
+      )}
+      {params.map((p, i) => (
+        <div key={i} className="flex gap-2 mb-1.5 items-center">
+          <input value={p.name} onChange={(e) => update(i, "name", e.target.value)} placeholder="param name" className="flex-1 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" style={{ fontFamily: "var(--font-mono)" }} />
+          <select value={p.type} onChange={(e) => update(i, "type", e.target.value)} className="w-24 bg-[var(--color-bg)] border border-[var(--color-line)] rounded px-1 py-1 text-[12px] text-white focus:outline-none" style={{ fontFamily: "var(--font-mono)" }}>
+            <option value="float">float</option>
+            <option value="int">int</option>
+            <option value="categorical">categorical</option>
+          </select>
+          {p.type === "categorical" ? (
+            <input value={p.choices} onChange={(e) => update(i, "choices", e.target.value)} placeholder="a,b,c" className="w-40 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" style={{ fontFamily: "var(--font-mono)" }} />
+          ) : (
+            <>
+              <input value={p.low} onChange={(e) => update(i, "low", e.target.value)} placeholder="low" className="w-16 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" style={{ fontFamily: "var(--font-mono)" }} />
+              <input value={p.high} onChange={(e) => update(i, "high", e.target.value)} placeholder="high" className="w-16 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" style={{ fontFamily: "var(--font-mono)" }} />
+            </>
+          )}
+          <button type="button" onClick={() => removeParam(i)} className="text-[11px] text-[var(--color-tertiary)] hover:text-[var(--color-status-red)] bg-transparent border-none px-1 transition-colors">×</button>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function paramsToSearchSpace(params) {
+  const space = {};
+  for (const p of params) {
+    if (!p.name.trim()) continue;
+    if (p.type === "categorical") {
+      const choices = p.choices.split(",").map((s) => s.trim()).filter(Boolean);
+      if (choices.length) space[p.name.trim()] = { type: "categorical", choices };
+    } else {
+      const low = Number(p.low);
+      const high = Number(p.high);
+      if (Number.isFinite(low) && Number.isFinite(high)) {
+        space[p.name.trim()] = { type: p.type, low, high };
+      }
+    }
+  }
+  return space;
+}
+
 export default function NewCampaignSlideOver({ open, onClose, status, refresh }) {
   // Manual form state
   const [name, setName] = useState("");
@@ -97,8 +126,10 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
   const [objectiveKey, setObjectiveKey] = useState("");
   const [direction, setDirection] = useState("maximise");
   const [workflow, setWorkflow] = useState("");
-  const [planner, setPlanner] = useState("heuristic");
-  const [plannerConfig, setPlannerConfig] = useState({});
+  const [planner, setPlanner] = useState("optuna");
+  const [optunaOperation, setOptunaOperation] = useState("");
+  const [optunaNTrials, setOptunaNTrials] = useState("");
+  const [optunaSpace, setOptunaSpace] = useState([]);
   const [budget, setBudget] = useState("12");
   const [parallelism, setParallelism] = useState("1");
   const [rules, setRules] = useState([]);
@@ -111,20 +142,15 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
   const [busy, setBusy] = useState(false);
 
   const workflows = status?.workflows || [];
-  const planners = status?.planners_available || ["heuristic"];
-  const plannerOptions = plannerOptionsFor(planners);
-  const useClaude = Boolean(status?.claude_configured);
+  const claudeAvailable = Boolean(status?.claude_configured);
+  const plannerOptions = PLANNER_OPTIONS.filter((p) => p.value !== "claude" || claudeAvailable);
 
   // -- Manual submit --
   const submitManual = async () => {
     if (!name.trim()) return;
     setSubmitting(true); setError("");
     try {
-      const pc = { ...plannerConfig };
-      if (planner === "bo" && !pc.operation && (status?.tools || []).length) {
-        pc.operation = status.tools[0].capability;
-      }
-      await postJson("/campaigns", {
+      const payload = {
         name: name.trim(),
         description,
         objective: objectiveKey ? { key: objectiveKey, direction } : undefined,
@@ -133,10 +159,29 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         parallelism: Number(parallelism) || 1,
         priority: 50,
         planner,
-        planner_config: pc,
+        planner_config: {},
         workflow: workflow || undefined,
-        use_claude_policy: useClaude,
-      });
+        use_claude_policy: claudeAvailable && planner !== "claude",
+      };
+      if (planner === "optuna") {
+        const searchSpace = paramsToSearchSpace(optunaSpace);
+        if (Object.keys(searchSpace).length === 0) {
+          setError("Optuna requires at least one parameter in the search space.");
+          setSubmitting(false);
+          return;
+        }
+        if (!optunaOperation.trim()) {
+          setError("Optuna requires an operation name to optimise.");
+          setSubmitting(false);
+          return;
+        }
+        payload.planner_config = {
+          operation: optunaOperation.trim(),
+          search_space: searchSpace,
+          ...(optunaNTrials ? { n_trials: Number(optunaNTrials) } : {}),
+        };
+      }
+      await postJson("/campaigns", payload);
       refresh?.();
       onClose();
     } catch (err) { setError(String(err)); }
@@ -166,12 +211,12 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
     if (!draft?.campaign) return;
     setSubmitting(true); setError("");
     try {
-      const lowered = text.toLowerCase();
-      const pl = lowered.includes("random") ? "heuristic"
-        : planners.includes("bo") ? "bo" : "heuristic";
-      const pc = {};
-      if (pl === "bo" && (status?.tools || []).length) {
-        pc.operation = status.tools[0].capability;
+      // Claude-designed drafts always run under the Claude planner — that's
+      // the natural partner for a natural-language-described campaign.
+      if (!claudeAvailable) {
+        setError("Claude planner requires ANTHROPIC_API_KEY on the server.");
+        setSubmitting(false);
+        return;
       }
       await postJson("/campaigns", {
         name: draft.campaign.name || "designed-campaign",
@@ -181,9 +226,9 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         budget: draft.campaign.budget ?? 12,
         parallelism: draft.campaign.parallelism ?? 1,
         priority: 50,
-        planner: pl,
-        planner_config: pc,
-        use_claude_policy: useClaude,
+        planner: "claude",
+        planner_config: {},
+        use_claude_policy: true,
       });
       setDraft(null);
       refresh?.();
@@ -197,82 +242,33 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
   };
 
   const plannerConfigFields = () => {
-    if (planner === "bo") {
-      return (
-        <div className="mt-2 mb-3 p-3 border border-[var(--color-line)] rounded-xl">
-          <span className="text-[11px] text-[var(--color-secondary)] uppercase tracking-[0.15em] block mb-2">BO config</span>
-          <input value={plannerConfig.operation || ""} onChange={(e) => setPlannerConfig({ ...plannerConfig, operation: e.target.value })} placeholder="operation to optimise" className="w-full bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
+    if (planner !== "optuna") return null;
+    return (
+      <div className="mt-2 mb-3 p-3 border border-[var(--color-line)] rounded-xl">
+        <span className="text-[11px] text-[var(--color-secondary)] uppercase tracking-[0.15em] block mb-2">Optuna config</span>
+        <div className="flex gap-2 mb-3">
+          <input
+            value={optunaOperation}
+            onChange={(e) => setOptunaOperation(e.target.value)}
+            placeholder="operation to optimise (capability name)"
+            className="flex-1 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors"
+            style={{ fontFamily: "var(--font-mono)" }}
+          />
+          <input
+            value={optunaNTrials}
+            onChange={(e) => setOptunaNTrials(e.target.value)}
+            placeholder="n_trials"
+            className="w-24 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors"
+            style={{ fontFamily: "var(--font-mono)" }}
+          />
         </div>
-      );
-    }
-    if (planner === "optuna") {
-      return (
-        <div className="mt-2 mb-3 p-3 border border-[var(--color-line)] rounded-xl">
-          <span className="text-[11px] text-[var(--color-secondary)] uppercase tracking-[0.15em] block mb-2">Optuna config</span>
-          <div className="flex gap-2">
-            <input value={plannerConfig.operation || ""} onChange={(e) => setPlannerConfig({ ...plannerConfig, operation: e.target.value })} placeholder="operation to optimise" className="flex-1 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
-            <input value={plannerConfig.n_trials || ""} onChange={(e) => setPlannerConfig({ ...plannerConfig, n_trials: e.target.value })} placeholder="n_trials" className="w-24 bg-transparent border border-[var(--color-line)] rounded px-2 py-1 text-[12px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
-          </div>
-        </div>
-      );
-    }
-    return null;
+        <OptunaSearchSpaceBuilder params={optunaSpace} onChange={setOptunaSpace} />
+      </div>
+    );
   };
-
-  const fillAddDemo = () => {
-    setName("find_max_add_demo");
-    setDescription("Maximise x+5 via add_two → add_three chain. x ∈ [0,10], optimal result=15.");
-    setObjectiveKey("result");
-    setDirection("maximise");
-    setWorkflow("add_two_then_three");
-    setPlanner("add_demo_optuna");
-    setPlannerConfig({});
-    setBudget("24");
-    setParallelism("1");
-    setRules([]);
-  };
-
-  const fillWslDemo = () => {
-    setName("maximize_wsl_add_then_cube");
-    setDescription("Run add_two then cube on the WSL2 SSH resource and maximise the final result with x constrained to [0,10].");
-    setObjectiveKey("result");
-    setDirection("maximise");
-    setWorkflow("add_two_then_cube");
-    setPlanner("wsl_ssh_add_cube_optuna");
-    setPlannerConfig({});
-    setBudget("24");
-    setParallelism("1");
-    setRules([]);
-  };
-
-  const tools = status?.tools || [];
-  const hasAddDemo = tools.some((t) => t.capability === "add_three")
-    && workflows.some((w) => w.name === "add_two_then_three")
-    && planners.includes("add_demo_optuna");
-  const hasWslDemo = tools.some((t) => t.capability === "cube")
-    && workflows.some((w) => w.name === "add_two_then_cube")
-    && planners.includes("wsl_ssh_add_cube_optuna");
 
   const manualForm = (
     <div>
-      {hasAddDemo ? (
-        <button
-          type="button"
-          onClick={fillAddDemo}
-          className="w-full mb-4 border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] rounded-lg px-3 py-2 text-[12px] hover:bg-[var(--color-accent-glow)] transition-all"
-        >
-          ⚡ Quick-fill add_demo template
-        </button>
-      ) : null}
-      {hasWslDemo ? (
-        <button
-          type="button"
-          onClick={fillWslDemo}
-          className="w-full mb-4 border border-dashed border-[var(--color-accent)] text-[var(--color-accent)] rounded-lg px-3 py-2 text-[12px] hover:bg-[var(--color-accent-glow)] transition-all"
-        >
-          ⚡ Quick-fill WSL SSH template
-        </button>
-      ) : null}
       <input type="text" value={name} onChange={(e) => setName(e.target.value)} placeholder="Campaign name" className="w-full mb-2 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
       <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="w-full mb-3 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
 
@@ -296,7 +292,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         <div className="flex flex-col gap-1">
           {plannerOptions.map((p) => (
             <label key={p.value} className={`flex items-start gap-2 p-2 rounded-lg border cursor-pointer transition-all ${planner === p.value ? "border-white/40 bg-white/[0.03]" : "border-transparent hover:bg-white/[0.02]"}`}>
-              <input type="radio" name="planner" value={p.value} checked={planner === p.value} onChange={(e) => { setPlanner(e.target.value); setPlannerConfig({}); }} className="accent-white mt-0.5" />
+              <input type="radio" name="planner" value={p.value} checked={planner === p.value} onChange={(e) => setPlanner(e.target.value)} className="accent-white mt-0.5" />
               <div>
                 <span className="text-[13px] text-white font-medium">{p.label}</span>
                 <p className="text-[11px] text-[var(--color-tertiary)] mt-0.5">{p.desc}</p>
@@ -304,6 +300,11 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
             </label>
           ))}
         </div>
+        {!claudeAvailable && (
+          <p className="text-[11px] text-[var(--color-tertiary)] italic mt-1">
+            Set ANTHROPIC_API_KEY on the server and restart to enable the Claude planner.
+          </p>
+        )}
       </div>
 
       {plannerConfigFields()}
@@ -333,12 +334,12 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={"Describe what you want to optimise, e.g.:\n\n'Find the best ML architecture to fit my phonon dataset. Try random forest, gradient boosting, and small neural nets. Minimise MAE on the test set, budget 20 trials.'"}
+        placeholder={"Describe what you want to optimise, e.g.:\n\n'Maximise Hc on an MLIP-relaxed / micromagnetics chain. Sweep Sm fraction x in [0,1] over 20 trials.'"}
         rows={6}
         className="w-full bg-transparent border border-[var(--color-line)] rounded-xl px-5 py-4 text-[14px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors resize-none"
       />
       <div className="flex gap-3 mt-4">
-        <button type="button" onClick={design} disabled={busy || !text.trim()} className="bg-transparent border border-white/20 hover:border-white/40 rounded-full px-5 py-2 text-[14px] font-medium text-white transition-all disabled:opacity-30">
+        <button type="button" onClick={design} disabled={busy || !text.trim() || !claudeAvailable} className="bg-transparent border border-white/20 hover:border-white/40 rounded-full px-5 py-2 text-[14px] font-medium text-white transition-all disabled:opacity-30">
           {busy ? "Designing…" : draft ? "Regenerate" : "Design"}
         </button>
         {draft && (
@@ -347,6 +348,12 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
           </button>
         )}
       </div>
+
+      {!claudeAvailable && (
+        <p className="text-[11px] text-[var(--color-tertiary)] italic mt-3">
+          Set ANTHROPIC_API_KEY on the server and restart to enable Claude-designed campaigns.
+        </p>
+      )}
 
       {error && <p className="text-[var(--color-status-red)] text-[13px] mt-3">{error}</p>}
 

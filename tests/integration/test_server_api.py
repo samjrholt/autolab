@@ -63,7 +63,11 @@ def test_campaign_submit_runs_and_completes(client):
             "objective": {"key": "score", "direction": "maximise"},
             "acceptance": {"rules": {"score": {">=": 0.95}}},
             "budget": 3,
-            "planner": "heuristic",
+            "planner": "optuna",
+            "planner_config": {
+                "operation": "demo_quadratic",
+                "search_space": {"x": {"type": "float", "low": 0.0, "high": 1.0}},
+            },
         },
     )
     assert r.status_code == 200
@@ -87,7 +91,11 @@ def test_ledger_filter_dsl(client):
             "name": "filter-data",
             "objective": {"key": "score", "direction": "maximise"},
             "budget": 2,
-            "planner": "heuristic",
+            "planner": "optuna",
+            "planner_config": {
+                "operation": "demo_quadratic",
+                "search_space": {"x": {"type": "float", "low": 0.0, "high": 1.0}},
+            },
         },
     ).json()["campaign_id"]
     deadline = time.time() + 15
@@ -137,7 +145,11 @@ def test_annotation_endpoint(client):
             "name": "annotate",
             "objective": {"key": "score", "direction": "maximise"},
             "budget": 1,
-            "planner": "heuristic",
+            "planner": "optuna",
+            "planner_config": {
+                "operation": "demo_quadratic",
+                "search_space": {"x": {"type": "float", "low": 0.0, "high": 1.0}},
+            },
         },
     ).json()["campaign_id"]
     deadline = time.time() + 10

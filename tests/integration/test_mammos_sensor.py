@@ -27,8 +27,14 @@ from examples.mammos_sensor.workflow import (
 
 @pytest.fixture
 def force_surrogate(monkeypatch):
-    """Force every MaMMoS operation onto its surrogate path."""
+    """Force every MaMMoS operation onto its surrogate path.
+
+    Strict mode is the default at run time — real backends required. These
+    integration tests explicitly opt back into the surrogate fallback so they
+    stay deterministic on CI machines without a WSL pixi env.
+    """
     monkeypatch.setenv("AUTOLAB_MAMMOS_FORCE_SURROGATE", "1")
+    monkeypatch.setenv("AUTOLAB_MAMMOS_ALLOW_SURROGATE", "1")
     yield
 
 

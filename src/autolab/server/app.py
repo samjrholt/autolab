@@ -37,14 +37,24 @@ from SQLite.
 Test bootstrap
 --------------
 
-``AUTOLAB_BOOTSTRAP`` env var (default ``"demo_quadratic"``) selects
-a bootstrap bundle: ``"demo_quadratic"`` (default) pre-registers a
-trivial stub Operation + one computer Resource; ``"superellipse"``
-wires the real-physics superellipse-sensor example; ``"mammos"`` wires
-the full 6-step MaMMoS demonstrator; ``"all"`` registers both; ``"shell_command"``
-registers a local subprocess backend; ``"none"`` boots a totally empty
-Lab; any ``module:function`` dotted path is called with the Lab as its
+``AUTOLAB_BOOTSTRAP`` env var (default ``"mammos"``) selects a bootstrap
+bundle. ``"mammos"`` (default) is the MVP demo — the 6-step MaMMoS
+sensor demonstrator (composition → relaxed structure → intrinsic
+magnetic parameters → finite-T parameters → sensor mesh → hysteresis
+loop → figure of merit) running real ``mammos-*`` / ``ubermag`` /
+``OOMMF`` backends inside a separate WSL pixi environment. See
+``examples/mammos_sensor/README.md`` for WSL setup; the VM resource
+is probed on boot and its capabilities reflect which backends are
+installed. Other modes: ``"demo_quadratic"`` (trivial stub),
+``"superellipse"`` (older single-stage sensor example), ``"all"``
+(registers superellipse + mammos), ``"shell_command"`` (local
+subprocess backend), ``"add_demo"`` / ``"wsl_demo"`` /
+``"wsl_ssh_demo"`` (older toy examples), ``"none"`` (boot empty),
+or any ``module:function`` dotted path called with the Lab as its
 only argument.
+
+Regardless of mode, every Lab boots with one default resource:
+``this-pc`` — the host machine — auto-registered before the mode runs.
 """
 
 from __future__ import annotations
@@ -92,7 +102,7 @@ from autolab.models import (
     WorkflowStep,
     WorkflowTemplate,
 )
-from autolab.planners.base import HeuristicPolicyProvider, PlanContext, Planner
+from autolab.planners.base import Planner
 from autolab.planners.registry import build as build_planner
 from autolab.planners.registry import list_planners
 from autolab.scheduler import CampaignScheduler
@@ -249,7 +259,7 @@ def _bootstrap_superellipse(lab: Lab) -> None:
     if str(repo_root) not in sys.path:
         sys.path.insert(0, str(repo_root))
 
-    if not lab.resources.list():
+    if not any(r.name == "pc-1" for r in lab.resources.list()):
         lab.register_resource(
             _Resource(
                 name="pc-1",
@@ -320,7 +330,7 @@ def _bootstrap_demo_quadratic(lab: Lab) -> None:
                 outputs={"score": score, "x": x},
             )
 
-    if not lab.resources.list():
+    if not any(r.name == "pc-1" for r in lab.resources.list()):
         lab.register_resource(
             _Resource(
                 name="pc-1",
@@ -495,9 +505,39 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
     log.warning("unknown AUTOLAB_BOOTSTRAP mode %r — booting empty", mode)
 
 
+def _auto_register_this_pc(lab: Lab) -> None:
+    """Register the host machine as a default ``this-pc`` resource.
+
+    Idempotent: if a resource named ``this-pc`` already exists in the
+    ResourceManager (restart case — rehydrated from the ledger), this is a
+    no-op. Every fresh Lab boots with exactly one resource so the Console
+    is never empty on first run.
+    """
+    import platform
+
+    existing = {r.name for r in lab.resources.list()}
+    if "this-pc" in existing:
+        return
+    caps: dict[str, Any] = {
+        "hostname": platform.node() or "localhost",
+        "os": f"{platform.system()} {platform.release()}",
+        "cpu_count": os.cpu_count() or 1,
+        "python": platform.python_version(),
+    }
+    lab.register_resource(
+        Resource(
+            name="this-pc",
+            kind="computer",
+            capabilities=caps,
+            description="The machine autolab is running on. Auto-registered at boot.",
+        )
+    )
+
+
 def _bootstrap(lab: Lab) -> None:
     _ensure_repo_on_path()
-    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "demo_quadratic")
+    _auto_register_this_pc(lab)
+    mode = os.environ.get("AUTOLAB_BOOTSTRAP", "mammos")
     _apply_bootstrap_mode(lab, mode)
 
 
@@ -643,7 +683,9 @@ async def status(request: Request) -> dict[str, Any]:
         "tools": [_tool_row(d) for d in lab.tools.list()],
         "campaigns": scheduler.status(),
         "workflows": [w.model_dump(mode="json") for w in lab._workflows.values()],
-        "planners_available": list_planners() + ["heuristic", "claude"],
+        # UI exposes only these two; example bootstraps may register more in
+        # the registry but they stay out of the dropdown to keep the MVP focused.
+        "planners_available": ["optuna", "claude"],
         "estimation_summary": eng.summary(),
         "claude_configured": bool(os.environ.get("ANTHROPIC_API_KEY")),
     }
@@ -846,41 +888,52 @@ async def register_workflow(body: WorkflowRequest, request: Request) -> dict[str
 
 
 def _make_planner(lab: Lab, kind: str, config: dict[str, Any], *, claude_policy: bool) -> Planner:
+    """Build a Planner for a campaign submission.
+
+    The UI exposes exactly two planners (``optuna`` and ``claude``); any other
+    name only works if it was explicitly registered by an example bootstrap
+    (e.g. ``add_demo_optuna``). Unknown names return a helpful 400.
+    """
     policy = None
     if claude_policy:
         policy = ClaudePolicyProvider(lab=lab, transport=ClaudeTransport())
-    kind = kind.lower()
-    if kind in ("heuristic", "", "none"):
-        from autolab.planners.base import Planner as _Planner
-
-        class _Heuristic(_Planner):
-            name = "heuristic"
-
-            def plan(self, context: PlanContext) -> list[ProposedStep]:  # type: ignore[override]
-                # With no explicit planner, default to a tiny random sweep over the first tool.
-                if not context.history or len(context.history) < (context.remaining_budget or 1):
-                    if lab.tools.list():
-                        decl = lab.tools.list()[0]
-                        return [
-                            ProposedStep(
-                                operation=decl.capability,
-                                inputs={"x": 0.5},
-                                decision={"planner": "heuristic", "note": "default stub"},
-                            )
-                        ]
-                return []
-
-        return _Heuristic(policy=policy or HeuristicPolicyProvider())
+    kind = (kind or "").lower().strip()
     if kind == "claude":
+        if not os.environ.get("ANTHROPIC_API_KEY"):
+            raise HTTPException(
+                400,
+                "Claude planner selected but ANTHROPIC_API_KEY is not set. "
+                "Add it to your .env and restart the server.",
+            )
         return ClaudePlanner(
             lab=lab,
             transport=ClaudeTransport(),
             policy=policy,
         )
+    if kind == "optuna":
+        if "search_space" not in config:
+            raise HTTPException(
+                400,
+                "Optuna planner requires a 'search_space' in planner_config. "
+                "Example: {\"operation\": \"my_op\", \"search_space\": {\"x\": "
+                "{\"type\": \"float\", \"low\": 0, \"high\": 10}}}",
+            )
+        try:
+            return build_planner("optuna", config)
+        except (KeyError, TypeError, ValueError) as exc:
+            raise HTTPException(400, f"Optuna planner config invalid: {exc}") from exc
+    # Fall through: accept any other *registered* planner (example bootstraps
+    # may register their own). Raise a friendly 400 if unknown.
     try:
         return build_planner(kind, config)
-    except KeyError as exc:
-        raise HTTPException(400, str(exc)) from exc
+    except KeyError:
+        known = list_planners() + ["claude"]
+        raise HTTPException(
+            400,
+            f"unknown planner {kind!r}. Supported: {sorted(set(known))}",
+        ) from None
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(400, f"planner {kind!r} config invalid: {exc}") from exc
 
 
 @app.post("/campaigns")
