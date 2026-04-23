@@ -56,6 +56,9 @@ dependencies = [
     # Claude + MCP
     "anthropic>=0.40",
     "mcp>=1.0",
+    # Jupyter kernel (Ledger Chat)
+    "jupyter_client>=8.6",
+    "ipykernel>=6.29",
     # Env file loading
     "python-dotenv>=1.0",
 ]
