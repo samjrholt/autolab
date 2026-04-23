@@ -145,7 +145,8 @@ class CampaignRequest(BaseModel):
     planner: str = "heuristic"  # "heuristic", "bo", "optuna", "claude", or a custom factory name
     planner_config: dict[str, Any] = Field(default_factory=dict)
     use_claude_policy: bool = False
-    # Optional: an inline workflow to execute deterministically when the planner is "none".
+    # Optional inline workflow for workflow-backed campaigns. The planner
+    # proposes the tunable step; CampaignRunner executes the full DAG.
     workflow: dict[str, Any] | None = None
     # When False, the campaign is registered in "queued" state but no task
     # is launched. The caller (typically the Console) starts it later via

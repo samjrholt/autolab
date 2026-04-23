@@ -56,6 +56,23 @@ Every transition (`pending → running → completed/failed`) is a separate
 SQLite + JSONL row. The JSONL file is the crash-safe secondary log;
 SQLite is the index for fast queries.
 
+When a Campaign carries a `WorkflowTemplate`, the same loop still begins
+with `Planner.plan() -> ProposedStep[]`, but each proposal is treated as
+one candidate for a deterministic DAG:
+
+1. `CampaignRunner` finds the workflow step whose `operation` matches the
+   proposed step's operation.
+2. The proposal inputs are applied as runtime overrides to that step.
+3. `WorkflowEngine` executes the whole DAG in topological order, wiring
+   upstream outputs through `input_mappings`.
+4. The target step's Record and `GateVerdict` are passed to
+   `Planner.react()`.
+5. Planner decision metadata, such as Optuna `trial_number`, is stamped on
+   the target Record so ask/tell planners can learn from completed trials.
+
+Campaign budget is counted in planner trials. Internal workflow steps still
+produce normal ledger Records, but they do not individually consume budget.
+
 ## Write invariants (non-negotiable)
 
 1. **Only the Orchestrator writes Records.** Operations return a

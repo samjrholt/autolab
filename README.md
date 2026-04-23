@@ -44,27 +44,36 @@ in the command you run.
 For example packs, the preferred workflow is:
 
 ```bash
-pixi run serve-clean
+pixi run clean
+pixi run serve-prod
+```
+
+In a second terminal:
+
+```bash
 pixi run apply-bootstrap -- wsl_ssh_demo
 ```
 
-For the WSL2-over-SSH demo there is also a shortcut:
+For the MaMMoS sensor shape-optimisation demo:
 
 ```bash
-pixi run apply-wsl-ssh
+pixi run clean
+pixi run serve-prod
+# in a second terminal
+pixi run sensor-demo
 ```
 
 That runtime pack registers:
 
-- Resource: `wsl` reached via `ssh wsl2`
-- Capabilities: `add_two`, `cube`
-- Workflow: `add_two_then_cube`
-- Planner: `wsl_ssh_add_cube_optuna`
+- Resource: `vm-primary`
+- Capabilities: `mammos.sensor_material_at_T`, `mammos.sensor_shape_fom`
+- Workflow: `sensor_shape_opt`
+- A queued Optuna campaign where each trial runs the full material -> FOM DAG
 
 One-shot startup bootstraps still work when you want a single command:
 
 ```bash
-pixi run serve-wsl-ssh
+AUTOLAB_BOOTSTRAP=wsl_ssh_demo pixi run serve
 ```
 
 Manual verification after applying a pack:
@@ -72,6 +81,12 @@ Manual verification after applying a pack:
 - `GET /debug/bootstrap` should report `bootstrap_mode: "wsl_ssh_demo"` with `bootstrap_error: null`
 - `GET /status` should show the `wsl` resource, `add_two` and `cube` capabilities, the `add_two_then_cube` workflow, and planner `wsl_ssh_add_cube_optuna`
 - In the Console, check `Library -> Resources`, `Library -> Capabilities`, `Library -> Workflows`, and `Campaigns -> New campaign`
+
+For workflow-backed campaigns, `POST /campaigns` accepts an inline
+`workflow`. The planner proposes the tunable step, the CampaignRunner
+executes the full DAG for each trial, upstream outputs are wired through
+`input_mappings`, and the target step's Record is reported back to the
+planner.
 
 ### HTTP surface (partial)
 

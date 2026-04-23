@@ -8,5 +8,5 @@ Capabilities registered
 Workflow:  add_two_then_cube   result = (x + 2) ** 3
 Planner:   wsl_ssh_add_cube_optuna  (Optuna TPE, maximise, x in [0, 10])
 
-Boot with:  pixi run serve-wsl-ssh
+Apply with:  pixi run apply-bootstrap -- wsl_ssh_demo
 """

@@ -20,7 +20,13 @@ package on `PYTHONPATH` is enough. Examples that need extra deps
 For examples exposed as Lab packs, the preferred manual flow is:
 
 ```bash
-pixi run serve-clean
+pixi run clean
+pixi run serve-prod
+```
+
+In a second terminal:
+
+```bash
 pixi run apply-bootstrap -- <pack-name>
 ```
 
@@ -44,12 +50,15 @@ hiding registration inside process startup.
   taxonomy. Boot with `AUTOLAB_BOOTSTRAP=mammos pixi run serve` to
   register all six Operations and the workflow against the running Lab.
 
-- [`sensor_shape_opt/`](sensor_shape_opt/) - *(stub)* placeholder for a
-  geometry-optimisation campaign on top of the mammos pipeline.
+- `sensor_shape_opt` bootstrap - minimal MaMMoS geometry-optimisation
+  campaign. It registers only the VM Resource, material Operation, FOM
+  Operation, and 2-step workflow needed for shape optimisation. Run
+  `pixi run sensor-demo` against a running Lab to create a queued Optuna
+  campaign where each trial executes the full material -> FOM DAG.
 
 - [`wsl_ssh_demo/`](wsl_ssh_demo/) - two tiny Operations executed on a
   WSL2 host over `ssh wsl2`: `add_two`, `cube`, the workflow
   `add_two_then_cube`, and planner `wsl_ssh_add_cube_optuna`. Apply with
-  `pixi run apply-wsl-ssh` or `pixi run apply-bootstrap -- wsl_ssh_demo`.
+  `pixi run apply-bootstrap -- wsl_ssh_demo`.
   Precondition: `ssh wsl2` must work with key-based auth and the scripts
   must exist under `/home/sam/autolab-wsl/scripts/`.

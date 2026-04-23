@@ -31,8 +31,8 @@ This runs `uvicorn autolab.server.app:app --reload --port 8000`. On boot
 the server:
 
 - creates (or re-opens) the Ledger directory under `./.autolab-runs/default/`,
-- pre-registers a demo Operation (`demo_quadratic`) and one Resource (`pc-1`)
-  so the UI is not empty,
+- pre-registers only the host Resource (`this-pc`) unless a bootstrap is
+  requested,
 - launches the `CampaignScheduler` as a background task,
 - starts a single WebSocket fan-out for live events.
 
@@ -46,21 +46,34 @@ For packs you want to test through the normal UI/REST registration path,
 prefer a clean lab plus a runtime apply instead of a startup bootstrap:
 
 ```powershell
-pixi run serve-clean
+pixi run clean
+pixi run serve-prod
+```
+
+In a second terminal:
+
+```powershell
 pixi run apply-bootstrap -- wsl_ssh_demo
 ```
 
 Shortcut for the WSL SSH example:
 
 ```powershell
-pixi run apply-wsl-ssh
+pixi run apply-bootstrap -- wsl_ssh_demo
 ```
 
-For a truly blank manual smoke-test ledger, use a dedicated root:
+For a truly blank manual smoke-test ledger, set a dedicated root before
+starting the server:
 
 ```powershell
-pixi run serve-clean --root .autolab-runs/manual-wsl-smoke
-pixi run apply-wsl-ssh
+$env:AUTOLAB_ROOT = ".autolab-runs/manual-wsl-smoke"
+pixi run serve-prod
+```
+
+In a second terminal:
+
+```powershell
+pixi run apply-bootstrap -- wsl_ssh_demo
 ```
 
 ## 3. Open the Console
@@ -97,6 +110,33 @@ of Operations filling resource slots), the **Plan tree** (Campaign →
 Operations), and a **Ledger feed** streaming records with their SHA-256
 checksums as steps complete.
 
+For the current MaMMoS sensor-shape demo, use the prepared-campaign path:
+
+```powershell
+pixi run clean
+pixi run serve-prod
+```
+
+In a second terminal:
+
+```powershell
+pixi run sensor-demo
+```
+
+This applies the minimal `sensor_shape_opt` bootstrap, registers two
+Operations (`mammos.sensor_material_at_T` and `mammos.sensor_shape_fom`),
+registers the `sensor_shape_opt` `WorkflowTemplate`, and creates a queued
+Optuna campaign. Start it from the Console or via:
+
+```powershell
+Invoke-RestMethod -Method Post http://127.0.0.1:8000/campaigns/<campaign_id>/start
+```
+
+Each Optuna trial runs the full workflow DAG: the material step completes
+first, its `Ms_A_per_m` and `A_J_per_m` outputs are wired into the FOM step,
+and only the FOM record is used as the planner trial result. A budget of
+12 therefore produces 12 material records and 12 FOM records.
+
 ## 5. Manual smoke test
 
 Before applying `wsl_ssh_demo`, make sure the SSH alias works from the same
@@ -106,7 +146,7 @@ machine that will run the Lab:
 ssh wsl2 echo ok
 ```
 
-Then verify the running Lab after `pixi run apply-wsl-ssh`:
+Then verify the running Lab after `pixi run apply-bootstrap -- wsl_ssh_demo`:
 
 ```powershell
 Invoke-RestMethod http://127.0.0.1:8000/debug/bootstrap | ConvertTo-Json -Depth 8

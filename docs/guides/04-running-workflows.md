@@ -5,6 +5,14 @@ Campaigns use them for the *deterministic* part of an experiment — the
 fixed chain of steps a single candidate runs through. The Planner picks
 the next candidate; the workflow runs it to completion.
 
+There are two execution modes:
+
+- **One-off workflow run:** `POST /workflows/{name}/run` executes a
+  registered template once and returns every step result.
+- **Workflow-backed campaign:** `POST /campaigns` may include a
+  `workflow` object. The Planner still proposes one tunable operation,
+  but the CampaignRunner executes the whole DAG for each proposal.
+
 ## Running from the Console
 
 Workflows appear in the **Library → Workflows** section. Boot with a
@@ -23,6 +31,8 @@ and resource lanes fill live, and open any campaign to see physics
 artefact cards as steps complete.
 
 ## From the REST API
+
+### One-off workflow run
 
 ```bash
 curl -X POST http://localhost:8000/workflows/mammos_sensor/run \
@@ -56,6 +66,58 @@ Response shape:
 }
 ```
 
+### Workflow-backed campaign
+
+Submit a campaign with both `planner_config.operation` and an inline
+`workflow`. The planner operation identifies the workflow step that receives
+the proposed inputs and whose Record is reported back to the planner.
+
+```json
+{
+  "name": "sensor-shape-opt",
+  "objective": {"key": "Hmax_A_per_m", "direction": "maximise"},
+  "budget": 12,
+  "parallelism": 1,
+  "planner": "optuna",
+  "planner_config": {
+    "operation": "mammos.sensor_shape_fom",
+    "search_space": {
+      "sx_nm": {"type": "float", "low": 5.0, "high": 70.0},
+      "sy_nm": {"type": "float", "low": 5.0, "high": 70.0}
+    }
+  },
+  "workflow": {
+    "name": "sensor_shape_opt",
+    "steps": [
+      {"step_id": "material", "operation": "mammos.sensor_material_at_T"},
+      {
+        "step_id": "fom",
+        "operation": "mammos.sensor_shape_fom",
+        "depends_on": ["material"],
+        "input_mappings": {
+          "Ms_A_per_m": "material.Ms_A_per_m",
+          "A_J_per_m": "material.A_J_per_m"
+        }
+      }
+    ]
+  },
+  "autostart": false
+}
+```
+
+For every trial, the CampaignRunner:
+
+- runs all dependencies before the planner-targeted step;
+- overlays the planner's proposed inputs onto matching workflow steps;
+- stamps planner decision metadata, including Optuna `trial_number`, onto
+  the target step's Record;
+- reacts to the target step's `GateVerdict`;
+- counts budget by planner trials, not by internal workflow steps.
+
+If no acceptance criteria are configured, completed trials continue until
+budget exhaustion. Add `acceptance` when a campaign should stop early on a
+threshold.
+
 ## Writing your own WorkflowTemplate
 
 `WorkflowTemplate` is a Pydantic model (`autolab.models`). Build it in
@@ -82,8 +144,7 @@ tmpl = WorkflowTemplate(
   dict when both are present.
 - Steps with no `depends_on` run immediately. Every other step waits
   until all of its dependencies reach `completed` or `soft_fail`.
-- Failed branches are skipped (their downstream steps land with
-  `record_status="proposed"` and a note in `decision`). Independent
+- Failed branches are skipped and listed in the `WorkflowResult`; independent
   branches keep running.
 
 ## Exporting a completed workflow
