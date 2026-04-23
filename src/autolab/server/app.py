@@ -1129,6 +1129,8 @@ async def design_campaign(body: DesignRequest, request: Request) -> dict[str, An
     return {
         "campaign": result.campaign_json,
         "workflow": result.workflow_json,
+        "questions": result.questions,
+        "ready_to_apply": result.ready_to_apply,
         "notes": result.notes,
         "model": result.raw.model,
         "offline": result.raw.offline,

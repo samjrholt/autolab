@@ -15,7 +15,7 @@ import { useState } from "react";
 export default function RefinementPrompt({
   onRefine,
   busy = false,
-  placeholder = "e.g. 'make it 1600 K, add O2 atmosphere'",
+  placeholder = "e.g. 'use workflow_name, optimise output_key, vary input_name'",
   label = "Refine with Claude",
 }) {
   const [text, setText] = useState("");

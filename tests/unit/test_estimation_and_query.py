@@ -166,9 +166,11 @@ def test_claude_policy_offline_falls_back_to_heuristic():
     assert action.type in (ActionType.CONTINUE, ActionType.ACCEPT)
 
 
-def test_campaign_designer_offline_returns_draft():
+def test_campaign_designer_offline_asks_for_missing_structure_without_lab_context():
     transport = ClaudeTransport(offline=True)
     designer = CampaignDesigner(transport=transport)
     out = designer.design("Maximise a sensor's sensitivity")
-    assert "name" in out.campaign_json
+    assert out.campaign_json == {}
+    assert out.ready_to_apply is False
+    assert out.questions == ["Which operation or workflow should autolab run?"]
     assert out.raw.offline is True

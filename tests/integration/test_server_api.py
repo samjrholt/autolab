@@ -112,11 +112,127 @@ def test_ledger_filter_dsl(client):
 
 
 def test_designer_offline(client):
-    r = client.post("/campaigns/design", json={"text": "Maximise score on the demo quadratic"})
+    r = client.post(
+        "/campaigns/design",
+        json={"text": "Use demo_quadratic to maximise score by varying x in [0, 1]"},
+    )
     assert r.status_code == 200
     body = r.json()
     assert body["offline"] is True
     assert "name" in body["campaign"]
+
+
+def test_campaign_designer_asks_generic_questions_for_underspecified_request(client):
+    r = client.post(
+        "/campaigns/design",
+        json={"text": "I want to start a campaign around this problem"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["offline"] is True
+    assert body["ready_to_apply"] is False
+    assert body["questions"] == [
+        "Which operation or workflow should autolab run?",
+        "Which output or metric should the campaign optimise?",
+    ]
+    assert body["campaign"] == {}
+
+
+def test_campaign_designer_asks_only_for_missing_details_in_partial_request(client):
+    r = client.post(
+        "/campaigns/design",
+        json={"text": "Maximise score with demo_quadratic"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["offline"] is True
+    assert body["ready_to_apply"] is False
+    assert body["campaign"] == {}
+    assert body["questions"] == [
+        "Which inputs, search ranges, or fixed conditions should define the campaign?"
+    ]
+
+
+def test_campaign_designer_refinement_can_move_from_questions_to_ready(client):
+    initial = client.post(
+        "/campaigns/design",
+        json={"text": "I want to start a campaign around this problem"},
+    )
+    assert initial.status_code == 200
+    initial_body = initial.json()
+    assert initial_body["ready_to_apply"] is False
+
+    refined = client.post(
+        "/campaigns/design",
+        json={
+            "text": "I want to start a campaign around this problem",
+            "previous": initial_body["campaign"],
+            "instruction": (
+                "Use demo_quadratic, optimise score, and vary x between 0 and 1."
+            ),
+        },
+    )
+    assert refined.status_code == 200
+    refined_body = refined.json()
+    assert refined_body["ready_to_apply"] is True
+    assert refined_body["questions"] == []
+    assert refined_body["campaign"]
+
+
+def test_campaign_designer_handles_physics_style_prompt_with_registered_tool(client):
+    registered = client.post(
+        "/tools/register",
+        json={
+            "capability": "anneal_scan",
+            "resource_kind": "furnace",
+            "module": "anneal_scan.stub.v1",
+            "description": "Anneal a sample and return coercivity.",
+            "inputs": {"temp_k": "float", "dwell_h": "float"},
+            "outputs": {"coercivity_kAm": "float"},
+            "produces_sample": False,
+            "destructive": False,
+            "typical_duration_s": 60,
+        },
+    )
+    assert registered.status_code == 200
+
+    r = client.post(
+        "/campaigns/design",
+        json={"text": "Use anneal_scan to maximise coercivity_kAm by varying temp_k between 900 and 1200."},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ready_to_apply"] is True
+    assert body["campaign"]["objective"]["key"] == "coercivity_kAm"
+    assert body["workflow"]["steps"][0]["operation"] == "anneal_scan"
+
+
+def test_campaign_designer_handles_automated_lab_prompt_with_registered_tool(client):
+    registered = client.post(
+        "/tools/register",
+        json={
+            "capability": "plate_reader_scan",
+            "resource_kind": "robot",
+            "module": "plate_reader_scan.stub.v1",
+            "description": "Run a plate reader assay and return fluorescence.",
+            "inputs": {"ph": "float", "temperature_c": "float"},
+            "outputs": {"fluorescence": "float"},
+            "produces_sample": False,
+            "destructive": False,
+            "typical_duration_s": 60,
+        },
+    )
+    assert registered.status_code == 200
+
+    r = client.post(
+        "/campaigns/design",
+        json={"text": "Run plate_reader_scan to maximise fluorescence while varying ph from 6 to 8."},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ready_to_apply"] is True
+    assert body["campaign"]["objective"]["key"] == "fluorescence"
+    assert body["workflow"]["steps"][0]["operation"] == "plate_reader_scan"
 
 
 def test_lab_setup_asks_questions_before_proposal(client):

@@ -31,9 +31,11 @@ real Claude call.
 
 from __future__ import annotations
 
+import ast
 import hashlib
 import json
 import os
+import re
 from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -54,6 +56,13 @@ if TYPE_CHECKING:
     from autolab.lab import Lab
 
 CLAUDE_MODEL_DEFAULT = "claude-opus-4-7"
+_TOOL_LINE_RE = re.compile(
+    r"^\s*-\s*(?P<capability>.+?)\s+\(module [^)]+\)\s+resource=(?P<resource>\S+)\s+"
+    r"inputs=(?P<inputs>\[[^\]]*\])\s+outputs=(?P<outputs>\[[^\]]*\])\s*$"
+)
+_RANGE_HINT_RE = re.compile(
+    r"\[[^\]]+\]|\bbetween\b|\bfrom\b.+\bto\b|\bsweep\b|\bvary\b|\bscan\b|\bfix(?:ed)?\b"
+)
 
 # Global set of in-flight claim-persistence tasks so the server lifespan can
 # drain them before closing the Ledger (otherwise a SQLite worker thread can
@@ -198,18 +207,68 @@ def _offline_response(system: str, user: str) -> str:
         or "draft campaign" in lowered
         or "user goal" in lowered
     ):
+        goal_text_raw = user.split("User goal (verbatim):", 1)[-1]
+        goal_text_raw = goal_text_raw.split("Tool catalogue:", 1)[0]
+        if "Refinement instruction (verbatim):" in user:
+            refinement_text_raw = user.split("Refinement instruction (verbatim):", 1)[-1]
+            refinement_text_raw = refinement_text_raw.split(
+                "Produce a revised proposal that preserves the user's edits where", 1
+            )[0]
+            goal_text_raw = "\n".join([goal_text_raw, refinement_text_raw])
+        goal_text = goal_text_raw.lower()
+        if "refinement instruction (verbatim):" in lowered:
+            refinement_text = lowered.split("refinement instruction (verbatim):", 1)[-1]
+            refinement_text = refinement_text.split(
+                "produce a revised proposal that preserves the user's edits where", 1
+            )[0]
+            goal_text = "\n".join([goal_text, refinement_text])
+        tools = _offline_extract_tool_catalogue(user)
+        chosen_tool = _offline_select_tool(goal_text, tools)
+        objective_key = _offline_select_objective(goal_text_raw, goal_text, chosen_tool, tools)
+        mentions_direction = any(
+            phrase in goal_text for phrase in ("maximise", "maximize", "minimise", "minimize", "optimise", "optimize")
+        )
+        has_input_guidance = _offline_has_input_guidance(goal_text, chosen_tool)
+        questions: list[str] = []
+        if chosen_tool is None:
+            questions.append("Which operation or workflow should autolab run?")
+        if objective_key is None:
+            questions.append("Which output or metric should the campaign optimise?")
+        if chosen_tool is not None and chosen_tool["inputs"] and not has_input_guidance:
+            questions.append("Which inputs, search ranges, or fixed conditions should define the campaign?")
+        if questions:
+            return json.dumps(
+                {
+                    "campaign": {},
+                    "workflow": None,
+                    "questions": questions,
+                    "ready_to_apply": False,
+                    "notes": "I need the operation, objective, and campaign conditions before I can draft a defensible campaign.",
+                }
+            )
+        direction = "minimise" if any(word in goal_text for word in ("minimise", "minimize", "reduce", "lower")) else "maximise"
+        capability = chosen_tool["capability"] if chosen_tool is not None else "operation"
+        objective = objective_key or "objective"
+        workflow = None
+        if chosen_tool is not None:
+            workflow = {
+                "name": f"{capability}-workflow".replace("_", "-"),
+                "description": f"Run {capability} as the evaluation workflow for this campaign.",
+                "steps": [{"step_id": "run", "operation": capability, "depends_on": [], "inputs": {}}],
+            }
         return json.dumps(
             {
                 "campaign": {
-                    "name": "offline-campaign",
-                    "description": "[offline fallback] scripted campaign",
-                    "objective": {"key": "score", "direction": "maximise"},
-                    "acceptance": {"rules": {"score": {">=": 0.9}}},
+                    "name": f"{capability}-{objective}".replace("_", "-"),
+                    "description": f"[offline fallback] campaign draft for {capability}",
+                    "objective": {"key": objective, "direction": direction},
                     "budget": 16,
                     "parallelism": 1,
                 },
-                "workflow": None,
-                "notes": "Anthropic API key not configured; returning a stub.",
+                "workflow": workflow,
+                "questions": [],
+                "ready_to_apply": True,
+                "notes": "Anthropic API key not configured; returning a generic offline draft.",
             }
         )
     if "lab setup" in lowered or "lab_setup_designer" in lowered or "scientist description" in lowered:
@@ -319,6 +378,94 @@ def _offline_response(system: str, user: str) -> str:
             }
         )
     return "{}"
+
+
+def _offline_extract_tool_catalogue(user: str) -> list[dict[str, Any]]:
+    tools: list[dict[str, Any]] = []
+    in_catalogue = False
+    for line in user.splitlines():
+        stripped = line.strip()
+        if stripped == "Tool catalogue:":
+            in_catalogue = True
+            continue
+        if not in_catalogue:
+            continue
+        if stripped == "Available resources:":
+            break
+        match = _TOOL_LINE_RE.match(line)
+        if not match:
+            continue
+        try:
+            inputs = ast.literal_eval(match.group("inputs"))
+            outputs = ast.literal_eval(match.group("outputs"))
+        except (ValueError, SyntaxError):
+            inputs = []
+            outputs = []
+        tools.append(
+            {
+                "capability": str(match.group("capability")).strip(),
+                "resource_kind": str(match.group("resource")).strip(),
+                "inputs": [str(value) for value in inputs or []],
+                "outputs": [str(value) for value in outputs or []],
+            }
+        )
+    return tools
+
+
+def _offline_normalise_identifier(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.lower()).strip()
+
+
+def _offline_mentions_identifier(text: str, identifier: str) -> bool:
+    if not identifier:
+        return False
+    normalised_text = f" {_offline_normalise_identifier(text)} "
+    aliases = {
+        identifier,
+        identifier.replace("_", " "),
+        identifier.replace("-", " "),
+    }
+    return any(f" {_offline_normalise_identifier(alias)} " in normalised_text for alias in aliases)
+
+
+def _offline_select_tool(goal_text: str, tools: list[dict[str, Any]]) -> dict[str, Any] | None:
+    for tool in tools:
+        if _offline_mentions_identifier(goal_text, tool["capability"]):
+            return tool
+    return None
+
+
+def _offline_select_objective(
+    goal_text_raw: str,
+    goal_text: str,
+    chosen_tool: dict[str, Any] | None,
+    tools: list[dict[str, Any]],
+) -> str | None:
+    candidate_outputs = chosen_tool["outputs"] if chosen_tool is not None else [
+        output for tool in tools for output in tool["outputs"]
+    ]
+    for output in candidate_outputs:
+        if _offline_mentions_identifier(goal_text, output):
+            return output
+    generic_match = re.search(
+        r"\b(?:maximise|maximize|minimise|minimize|optimise|optimize)\s+([A-Za-z0-9_]+)",
+        goal_text_raw,
+        flags=re.IGNORECASE,
+    )
+    if generic_match:
+        return generic_match.group(1)
+    if chosen_tool is not None and len(chosen_tool["outputs"]) == 1:
+        if any(word in goal_text for word in ("maximise", "maximize", "minimise", "minimize", "optimise", "optimize")):
+            return chosen_tool["outputs"][0]
+    return None
+
+
+def _offline_has_input_guidance(goal_text: str, chosen_tool: dict[str, Any] | None) -> bool:
+    if chosen_tool is None or not chosen_tool["inputs"]:
+        return False
+    if any(_offline_mentions_identifier(goal_text, name) for name in chosen_tool["inputs"]):
+        return True
+    return bool(_RANGE_HINT_RE.search(goal_text))
 
 
 # ---------------------------------------------------------------------------
@@ -623,12 +770,20 @@ Reply with a single compact JSON object:
         {"step_id": "s1", "operation": "<tool>", "depends_on": [], "inputs": {...}}
       ]
     }?,
+    "questions": [
+      "Which metric should be optimised?"
+    ],
+    "ready_to_apply": false,
     "notes": "short human rationale"
   }
 
 Rules:
 - Use only tools that appear in the `tools` list.
 - The objective.key MUST match an output field the chosen tools produce.
+- If required information is missing, ask concise questions in `questions`,
+  set `ready_to_apply` false, and leave `campaign` empty or partial.
+- Required campaign information is: operation/capability to run, objective
+  metric, and enough inputs or search dimensions to define the search.
 - Emit ONLY the JSON; no prose.
 - If resources are insufficient for the stated goal, still return a best-effort draft
   and describe the mismatch in `notes`.
@@ -641,6 +796,8 @@ class DesignResult:
 
     campaign_json: dict[str, Any]
     workflow_json: dict[str, Any] | None
+    questions: list[str]
+    ready_to_apply: bool
     notes: str
     raw: ClaudeResponse
 
@@ -679,6 +836,8 @@ class CampaignDesigner:
         return DesignResult(
             campaign_json=dict(data.get("campaign") or {}),
             workflow_json=dict(data["workflow"]) if data.get("workflow") else None,
+            questions=[str(q) for q in data.get("questions") or []],
+            ready_to_apply=bool(data.get("ready_to_apply", True)),
             notes=str(data.get("notes") or ""),
             raw=resp,
         )

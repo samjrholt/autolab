@@ -139,6 +139,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
   const [text, setText] = useState("");
   const [draft, setDraft] = useState(null);
   const [busy, setBusy] = useState(false);
+  const [clarifications, setClarifications] = useState({});
 
   const workflows = status?.workflows || [];
   const claudeAvailable = Boolean(status?.claude_configured);
@@ -197,6 +198,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
     try {
       const res = await postJson("/campaigns/design", { text, previous: draft?.campaign, instruction: null });
       setDraft(res);
+      setClarifications({});
     } catch (err) { setError(String(err)); }
     finally { setBusy(false); }
   };
@@ -211,7 +213,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
   };
 
   const submitDraft = async () => {
-    if (!draft?.campaign) return;
+    if (!draft?.campaign || draft.ready_to_apply === false) return;
     setSubmitting(true); setError("");
     try {
       // Claude-designed drafts always run under the Claude planner — that's
@@ -228,6 +230,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         acceptance: draft.campaign.acceptance,
         budget: draft.campaign.budget ?? 12,
         parallelism: draft.campaign.parallelism ?? 1,
+        workflow: draft.workflow || undefined,
         priority: 50,
         planner: "claude",
         planner_config: {},
@@ -242,6 +245,20 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
 
   const updateDraft = (field, value) => {
     setDraft((prev) => ({ ...prev, campaign: { ...prev.campaign, [field]: value } }));
+  };
+
+  const visibleQuestions = draft?.questions || [];
+  const canSubmitClarifications =
+    visibleQuestions.length > 0 &&
+    visibleQuestions.every((question) => clarifications[question]?.trim());
+
+  const submitClarifications = async () => {
+    if (!canSubmitClarifications) return;
+    const instruction = Object.entries(clarifications)
+      .filter(([, answer]) => answer?.trim())
+      .map(([question, answer]) => `${question} ${answer.trim()}.`)
+      .join(" ");
+    await refineDraft(instruction);
   };
 
   const plannerConfigFields = () => {
@@ -271,7 +288,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
       <input type="text" aria-label="Campaign description" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="Description" className="w-full mb-3 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
 
       <div className="flex gap-2 mb-3">
-        <input type="text" aria-label="Objective output key" value={objectiveKey} onChange={(e) => setObjectiveKey(e.target.value)} placeholder="Objective key (e.g. coercivity_kAm)" className="flex-1 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
+        <input type="text" aria-label="Objective output key" value={objectiveKey} onChange={(e) => setObjectiveKey(e.target.value)} placeholder="Objective key (e.g. output_key)" className="flex-1 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[13px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" />
         <select aria-label="Objective direction" value={direction} onChange={(e) => setDirection(e.target.value)} className="w-32 bg-[var(--color-bg)] border border-[var(--color-line)] rounded-lg px-2 py-1.5 text-[13px] text-white focus:outline-none">
           <option value="maximise">Maximise</option>
           <option value="minimise">Minimise</option>
@@ -332,7 +349,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        placeholder={"Describe what you want to optimise, e.g.:\n\n'Maximise Hc on an MLIP-relaxed / micromagnetics chain. Sweep Sm fraction x in [0,1] over 20 trials.'"}
+        placeholder={"Describe the operation or workflow, the output to optimise, and any variables or constraints.\n\nExample:\n'use operation_name, maximise output_key, vary input_name between low and high'"}
         rows={6}
         className="w-full bg-transparent border border-[var(--color-line)] rounded-xl px-5 py-4 text-[14px] placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors resize-none"
       />
@@ -340,7 +357,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         <button type="button" onClick={design} disabled={busy || !text.trim() || !claudeAvailable} className="bg-transparent border border-white/20 hover:border-white/40 rounded-full px-5 py-2 text-[14px] font-medium text-white transition-all disabled:opacity-30">
           {busy ? "Designing…" : draft ? "Regenerate" : "Design"}
         </button>
-        {draft && (
+        {draft && draft.ready_to_apply !== false && draft.campaign && Object.keys(draft.campaign).length > 0 && (
           <button type="button" onClick={submitDraft} disabled={submitting} className="bg-white text-[var(--color-bg)] rounded-full px-5 py-2 text-[14px] font-semibold hover:bg-white/90 transition-all disabled:opacity-30">
             {submitting ? "Starting…" : "Approve & start"}
           </button>
@@ -355,7 +372,58 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
 
       {error && <p className="text-[var(--color-status-red)] text-[13px] mt-3">{error}</p>}
 
-      {draft?.campaign && (
+      {draft?.questions?.length ? (
+        <div className="mt-4 border border-[var(--color-line)] rounded-2xl p-5">
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[var(--color-secondary)] mb-3">
+            More information needed
+          </p>
+          <div className="flex flex-col gap-2 text-[13px] text-[var(--color-secondary)]">
+            {draft.questions.map((question) => (
+              <p key={question}>{question}</p>
+            ))}
+          </div>
+          {draft.notes && <p className="mt-3 text-[13px] text-[var(--color-secondary)] italic">{draft.notes}</p>}
+          {visibleQuestions.length > 0 ? (
+            <div className="mt-4 border border-[var(--color-line)] rounded-xl p-4 bg-white/[0.01]">
+              <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[var(--color-secondary)] mb-3">
+                Fill in the missing details
+              </p>
+              <div className="flex flex-col gap-3">
+                {visibleQuestions.map((question) => (
+                  <label key={question} className="text-[12px] text-[var(--color-secondary)]">
+                    <span className="block mb-1">{question}</span>
+                    <input
+                      type="text"
+                      aria-label={question}
+                      value={clarifications[question] || ""}
+                      onChange={(e) => setClarifications((prev) => ({ ...prev, [question]: e.target.value }))}
+                      placeholder="Type your answer"
+                      className="w-full bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-2 text-[13px] text-white placeholder:text-[var(--color-tertiary)] focus:outline-none focus:border-[var(--color-line-hover)] transition-colors"
+                    />
+                  </label>
+                ))}
+              </div>
+              <button
+                type="button"
+                onClick={submitClarifications}
+                disabled={busy || !canSubmitClarifications}
+                className="mt-3 bg-white text-[var(--color-bg)] rounded-full px-4 py-2 text-[13px] font-semibold hover:bg-white/90 transition-all disabled:opacity-30"
+              >
+                {busy ? "Updating…" : "Continue"}
+              </button>
+            </div>
+          ) : null}
+          {visibleQuestions.length === 0 ? (
+              <RefinementPrompt
+                onRefine={refineDraft}
+                busy={busy}
+                placeholder="e.g. 'use operation_name, optimise output_key, vary input_name between low and high'"
+              />
+          ) : null}
+        </div>
+      ) : null}
+
+      {draft?.campaign && Object.keys(draft.campaign).length > 0 && (
         <div className="mt-6 border border-[var(--color-line)] rounded-2xl p-5">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[var(--color-secondary)] mb-3">Draft preview (edit inline)</p>
           <input value={draft.campaign.name || ""} onChange={(e) => updateDraft("name", e.target.value)} placeholder="Campaign name" className="w-full mb-2 bg-transparent border border-[var(--color-line)] rounded-lg px-3 py-1.5 text-[18px] text-white font-normal focus:outline-none focus:border-[var(--color-line-hover)] transition-colors" style={{ fontFamily: "var(--font-serif)" }} />
@@ -367,7 +435,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
             parallelism: draft.campaign.parallelism || 1,
           }} />
           {draft.notes && <p className="mt-3 text-[13px] text-[var(--color-secondary)] italic">{draft.notes}</p>}
-          <RefinementPrompt onRefine={refineDraft} busy={busy} placeholder="e.g. 'increase budget to 30, add constraint that MAE < 0.1'" />
+          <RefinementPrompt onRefine={refineDraft} busy={busy} placeholder="e.g. 'increase budget to 30, add an acceptance rule on output_key, use workflow_name'" />
         </div>
       )}
     </div>
