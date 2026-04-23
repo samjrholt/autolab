@@ -950,6 +950,10 @@ def _make_planner(lab: Lab, kind: str, config: dict[str, Any], *, claude_policy:
             lab=lab,
             transport=ClaudeTransport(),
             policy=policy,
+            operation=config.get("operation"),
+            search_space=config.get("search_space"),
+            batch_size=int(config.get("batch_size") or 1),
+            fixed_inputs=dict(config.get("fixed_inputs") or {}),
         )
     if kind == "optuna":
         if "search_space" not in config:

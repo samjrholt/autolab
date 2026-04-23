@@ -37,9 +37,10 @@ serve-prod = { cmd = "python -m autolab.server.cli --host 0.0.0.0", env = { PYTH
 clean = { cmd = "python scripts/clean_local_state.py" }
 
 # Register the MaMMoS sensor shape-optimisation demo on a running Lab.
-# Creates resources + operations + workflow + one prepared (queued)
-# campaign. Start the campaign from the Console when you're ready.
-#   pixi run sensor-demo                  # Optuna planner (default)
+# Creates resources + operations + workflow + prepared queued comparison
+# campaigns. Start one or both from the Console when you're ready.
+#   pixi run sensor-demo                  # Optuna + Claude campaigns (default)
+#   pixi run sensor-demo -- --planner optuna
 #   pixi run sensor-demo -- --planner claude
 sensor-demo = { cmd = "python scripts/register_sensor_demo.py", env = { PYTHONPATH = "." } }
 

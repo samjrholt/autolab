@@ -4,11 +4,28 @@ from __future__ import annotations
 
 import pytest
 
+from autolab.agents.claude import ClaudePlanner, ClaudeResponse
+from autolab.models import Objective
 from autolab.planners import list_planners, register_planner, unregister_planner
-from autolab.planners.base import Planner
+from autolab.planners.base import PlanContext, Planner
 from autolab.planners.bo import BOPlanner
 from autolab.planners.optuna import OptunaPlanner
 from autolab.planners.registry import build
+
+
+class _FakeClaudeTransport:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.user_prompt = ""
+
+    def call(self, system: str, user: str) -> ClaudeResponse:
+        self.user_prompt = user
+        return ClaudeResponse(
+            text=self.text,
+            model="fake-claude",
+            prompt_hash="hash",
+            offline=False,
+        )
 
 
 class TestBuiltinRegistry:
@@ -54,6 +71,44 @@ class TestBuiltinRegistry:
     def test_unknown_name_raises_keyerror(self):
         with pytest.raises(KeyError):
             build("not_a_real_planner", {})
+
+    def test_claude_planner_uses_configured_search_space(self):
+        transport = _FakeClaudeTransport(
+            """
+            {
+              "proposals": [
+                {
+                  "operation": "mammos.sensor_material_at_T",
+                  "inputs": {"sx_nm": 90, "sy_nm": 30},
+                  "decision": "try a wider x axis"
+                }
+              ]
+            }
+            """
+        )
+        planner = ClaudePlanner(
+            transport=transport,
+            operation="mammos.sensor_shape_fom",
+            search_space={
+                "sx_nm": {"type": "float", "low": 5.0, "high": 70.0},
+                "sy_nm": {"type": "float", "low": 5.0, "high": 70.0},
+            },
+        )
+
+        proposals = planner.plan(
+            PlanContext(
+                campaign_id="camp-test",
+                objective=Objective(key="Hmax_A_per_m", direction="maximise"),
+                history=[],
+                resources=[],
+                remaining_budget=12,
+            )
+        )
+
+        assert "Search space bounds" in transport.user_prompt
+        assert proposals[0].operation == "mammos.sensor_shape_fom"
+        assert proposals[0].inputs == {"sx_nm": 70.0, "sy_nm": 30.0}
+        assert proposals[0].decision["method"] == "llm"
 
 
 class TestCustomRegistration:

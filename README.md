@@ -68,7 +68,15 @@ That runtime pack registers:
 - Resource: `vm-primary`
 - Capabilities: `mammos.sensor_material_at_T`, `mammos.sensor_shape_fom`
 - Workflow: `sensor_shape_opt`
-- A queued Optuna campaign where each trial runs the full material -> FOM DAG
+- Two queued comparison campaigns, one Optuna and one Claude/LLM, where each trial runs the full material -> FOM DAG
+
+The Claude campaign requires `ANTHROPIC_API_KEY` on the server. To create
+only one comparison arm:
+
+```bash
+pixi run sensor-demo -- --planner optuna
+pixi run sensor-demo -- --planner claude
+```
 
 One-shot startup bootstraps still work when you want a single command:
 

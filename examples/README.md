@@ -53,8 +53,10 @@ hiding registration inside process startup.
 - `sensor_shape_opt` bootstrap - minimal MaMMoS geometry-optimisation
   campaign. It registers only the VM Resource, material Operation, FOM
   Operation, and 2-step workflow needed for shape optimisation. Run
-  `pixi run sensor-demo` against a running Lab to create a queued Optuna
-  campaign where each trial executes the full material -> FOM DAG.
+  `pixi run sensor-demo` against a running Lab to create queued Optuna
+  and Claude/LLM campaigns where each trial executes the full material
+  -> FOM DAG. Use `pixi run sensor-demo -- --planner optuna` or
+  `--planner claude` to create just one comparison arm.
 
 - [`wsl_ssh_demo/`](wsl_ssh_demo/) - two tiny Operations executed on a
   WSL2 host over `ssh wsl2`: `add_two`, `cube`, the workflow

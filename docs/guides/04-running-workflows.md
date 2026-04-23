@@ -105,12 +105,34 @@ the proposed inputs and whose Record is reported back to the planner.
 }
 ```
 
+To let Claude drive the same bounded optimisation, keep the same
+`planner_config.operation` and `search_space` but switch the planner:
+
+```json
+{
+  "planner": "claude",
+  "planner_config": {
+    "operation": "mammos.sensor_shape_fom",
+    "search_space": {
+      "sx_nm": {"type": "float", "low": 5.0, "high": 70.0},
+      "sy_nm": {"type": "float", "low": 5.0, "high": 70.0}
+    },
+    "batch_size": 1
+  },
+  "use_claude_policy": true
+}
+```
+
+The server validates Claude's proposed inputs against the configured
+search space before dispatching the workflow, so the LLM can reason about
+the next candidate without breaking the operation contract.
+
 For every trial, the CampaignRunner:
 
 - runs all dependencies before the planner-targeted step;
 - overlays the planner's proposed inputs onto matching workflow steps;
-- stamps planner decision metadata, including Optuna `trial_number`, onto
-  the target step's Record;
+- stamps planner decision metadata, such as Optuna `trial_number` or
+  Claude `method: "llm"`, onto the target step's Record;
 - reacts to the target step's `GateVerdict`;
 - counts budget by planner trials, not by internal workflow steps.
 

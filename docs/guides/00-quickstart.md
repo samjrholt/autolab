@@ -126,16 +126,20 @@ pixi run sensor-demo
 This applies the minimal `sensor_shape_opt` bootstrap, registers two
 Operations (`mammos.sensor_material_at_T` and `mammos.sensor_shape_fom`),
 registers the `sensor_shape_opt` `WorkflowTemplate`, and creates a queued
-Optuna campaign. Start it from the Console or via:
+Optuna campaign plus a queued Claude/LLM campaign for side-by-side
+comparison. Start either one from the Console or via:
 
 ```powershell
 Invoke-RestMethod -Method Post http://127.0.0.1:8000/campaigns/<campaign_id>/start
 ```
 
-Each Optuna trial runs the full workflow DAG: the material step completes
+Each planner trial runs the full workflow DAG: the material step completes
 first, its `Ms_A_per_m` and `A_J_per_m` outputs are wired into the FOM step,
-and only the FOM record is used as the planner trial result. A budget of
-12 therefore produces 12 material records and 12 FOM records.
+and only the FOM record is used as the planner trial result. Claude's
+proposed trials are validated against the same shape bounds used by Optuna.
+A budget of 12 therefore produces 12 material records and 12 FOM records
+per campaign. Use `pixi run sensor-demo -- --planner optuna` or
+`--planner claude` to create just one comparison arm.
 
 ## 5. Manual smoke test
 

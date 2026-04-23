@@ -34,6 +34,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from contextlib import suppress
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -70,13 +71,11 @@ async def drain_pending_claims(timeout: float = 5.0) -> None:
     import asyncio
 
     pending = list(_PENDING_CLAIM_TASKS)
-    try:
+    with suppress(TimeoutError, Exception):
         await asyncio.wait_for(
             asyncio.gather(*pending, return_exceptions=True),
             timeout=timeout,
         )
-    except (asyncio.TimeoutError, Exception):
-        pass
 
 
 # ---------------------------------------------------------------------------
@@ -369,14 +368,29 @@ class ClaudePlanner(Planner):
         transport: ClaudeTransport | None = None,
         policy: PolicyProvider | None = None,
         fallback: Planner | None = None,
+        operation: str | None = None,
+        search_space: dict[str, dict[str, Any]] | None = None,
+        batch_size: int = 1,
+        fixed_inputs: dict[str, Any] | None = None,
     ) -> None:
         super().__init__(policy=policy or ClaudePolicyProvider(lab=lab, transport=transport))
         self._lab = lab
         self._transport = transport or ClaudeTransport()
         self._fallback = fallback
+        self._operation = operation
+        self._search_space = dict(search_space or {})
+        self._batch_size = max(1, int(batch_size))
+        self._fixed_inputs = dict(fixed_inputs or {})
 
     def plan(self, context: PlanContext) -> list[ProposedStep]:
-        user = _describe_plan_context(context, self._lab)
+        user = _describe_plan_context(
+            context,
+            self._lab,
+            operation=self._operation,
+            search_space=self._search_space,
+            fixed_inputs=self._fixed_inputs,
+            batch_size=self._batch_size,
+        )
         resp = self._transport.call(_PLANNER_SYSTEM, user)
         if self._lab is not None:
             # Persist a planner claim as an Annotation attached to the lab-level
@@ -394,9 +408,18 @@ class ClaudePlanner(Planner):
         out: list[ProposedStep] = []
         for item in raw_props:
             try:
-                op = str(item["operation"])
-                inputs = dict(item.get("inputs") or {})
+                op = str(item.get("operation") or self._operation)
+                inputs = dict(self._fixed_inputs)
+                inputs.update(dict(item.get("inputs") or {}))
             except (KeyError, TypeError):
+                continue
+            if self._operation:
+                # For workflow-backed campaigns the planner must target the
+                # tunable workflow step. If Claude names an upstream dependency
+                # in its JSON, keep the campaign on the configured target.
+                op = self._operation
+            inputs = _normalise_planner_inputs(inputs, self._search_space)
+            if inputs is None:
                 continue
             out.append(
                 ProposedStep(
@@ -404,16 +427,27 @@ class ClaudePlanner(Planner):
                     inputs=inputs,
                     decision={
                         "planner": self.name,
-                        "rationale": str(item.get("decision") or "")[:400],
+                        "method": "llm",
+                        "rationale": str(item.get("decision") or data.get("reason") or "")[:400],
                     },
                 )
             )
+            if len(out) >= min(self._batch_size, context.remaining_budget or self._batch_size):
+                break
         if not out and self._fallback is not None:
             return self._fallback.plan(context)
         return out
 
 
-def _describe_plan_context(ctx: PlanContext, lab: Lab | None) -> str:
+def _describe_plan_context(
+    ctx: PlanContext,
+    lab: Lab | None,
+    *,
+    operation: str | None = None,
+    search_space: dict[str, dict[str, Any]] | None = None,
+    fixed_inputs: dict[str, Any] | None = None,
+    batch_size: int = 1,
+) -> str:
     lines = [
         "Objective:",
         f"  key={ctx.objective.key} direction={ctx.objective.direction} target={ctx.objective.target}",
@@ -421,12 +455,28 @@ def _describe_plan_context(ctx: PlanContext, lab: Lab | None) -> str:
     if ctx.acceptance and ctx.acceptance.rules:
         lines.append(f"Acceptance rules: {json.dumps(ctx.acceptance.rules)}")
     lines.append(f"Remaining budget: {ctx.remaining_budget}")
+    lines.append(f"Requested batch size: {batch_size}")
+    if operation:
+        lines.extend(
+            [
+                "Optimizer target:",
+                f"  operation={operation}",
+                "  Return proposals for this operation only.",
+            ]
+        )
+    if search_space:
+        lines.append("Search space bounds:")
+        for name, spec in search_space.items():
+            lines.append(f"  - {name}: {json.dumps(spec, default=str)}")
+    if fixed_inputs:
+        lines.append(f"Fixed inputs: {json.dumps(fixed_inputs, default=str)}")
     if lab is not None:
         lines.append("Available tools:")
         for decl in lab.tools.list():
             lines.append(
                 f"  - {decl.capability} (resource={decl.resource_kind}) "
-                f"inputs={list(decl.inputs.keys()) if decl.inputs else []}"
+                f"inputs={json.dumps(decl.inputs or {}, default=str)} "
+                f"outputs={json.dumps(decl.outputs or {}, default=str)}"
             )
         lines.append("Available resources:")
         for res in lab.resources.list():
@@ -438,6 +488,35 @@ def _describe_plan_context(ctx: PlanContext, lab: Lab | None) -> str:
             f"inputs={json.dumps(r.inputs, default=str)[:120]}"
         )
     return "\n".join(lines)
+
+
+def _normalise_planner_inputs(
+    inputs: dict[str, Any],
+    search_space: dict[str, dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Validate and coerce LLM-proposed inputs against optional bounds."""
+    if not search_space:
+        return inputs
+    out = dict(inputs)
+    for name, spec in search_space.items():
+        if name not in out:
+            return None
+        kind = spec.get("type", "float")
+        value = out[name]
+        if kind == "categorical":
+            choices = list(spec.get("choices") or [])
+            if value not in choices:
+                return None
+            continue
+        try:
+            low = float(spec["low"])
+            high = float(spec["high"])
+            numeric = float(value)
+        except (KeyError, TypeError, ValueError):
+            return None
+        numeric = min(max(numeric, low), high)
+        out[name] = round(numeric) if kind == "int" else numeric
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -683,11 +762,8 @@ def _persist_claim(
                 record_status="completed",
                 tags=["claude", author_label],
             )
-            try:
+            with suppress(Exception):
                 await lab.ledger.append(placeholder)
-            except Exception:
-                # Another concurrent call may have created it.
-                pass
         ann = Annotation(
             target_record_id=target_record_id,
             kind="claim",
@@ -707,10 +783,8 @@ def _persist_claim(
 
             def _done(t: asyncio.Task) -> None:
                 _PENDING_CLAIM_TASKS.discard(t)
-                try:
+                with suppress(Exception):
                     t.result()
-                except Exception:
-                    pass
 
             task.add_done_callback(_done)
             return
