@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Sequence
+from contextlib import suppress
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -57,9 +58,11 @@ from autolab.models import (
     Objective,
     ProposedStep,
     Record,
+    WorkflowTemplate,
 )
 from autolab.orchestrator import CampaignRun
 from autolab.planners.base import DecisionContext, PlanContext, Planner
+from autolab.workflow import StepResult, WorkflowResult
 
 if TYPE_CHECKING:
     from autolab.lab import Lab
@@ -96,6 +99,7 @@ class Campaign(BaseModel):
     acceptance: AcceptanceCriteria | None = None
     budget: int | None = 32
     parallelism: int = 1
+    workflow: WorkflowTemplate | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -240,6 +244,41 @@ class CampaignRunner:
             async with sem:
                 if self._is_done():
                     raise asyncio.CancelledError("campaign already finished")
+
+                # If a workflow is configured, run it with the proposed step's inputs
+                if self.campaign.workflow is not None:
+                    workflow_step_ids = _find_workflow_steps(self.campaign.workflow, step.operation)
+                    wf_result = await self.lab._workflow_engine.run(
+                        self.campaign.workflow,
+                        self._run,
+                        input_overrides={step_id: step.inputs for step_id in workflow_step_ids},
+                        decision_overrides={
+                            step_id: dict(step.decision) for step_id in workflow_step_ids
+                        },
+                        acceptance=self.campaign.acceptance,
+                    )
+                    # For the planner's react() loop, use the workflow step that
+                    # corresponds to the planner proposal, not an upstream setup step.
+                    target = _find_workflow_result(wf_result, workflow_step_ids)
+                    rec = (
+                        target.record
+                        if target is not None
+                        else (wf_result.records[-1] if wf_result.records else None)
+                    )
+                    if rec is None:
+                        raise RuntimeError("workflow failed before producing any records")
+                    gate = (
+                        target.gate
+                        if target is not None
+                        else GateVerdict(
+                            result="fail",
+                            reason="workflow failed before target step completed",
+                        )
+                    )
+                    self._steps_run += 1
+                    return step, rec, gate
+
+                # Otherwise, dispatch the step normally
                 rec, gate = await self.lab.orchestrator.run_step(
                     step, self._run, acceptance=self.campaign.acceptance
                 )
@@ -267,12 +306,12 @@ class CampaignRunner:
             history=history,
             allowed_actions=(
                 ActionType.CONTINUE,
-                ActionType.ACCEPT,
                 ActionType.STOP,
                 ActionType.RETRY_STEP,
                 ActionType.REPLAN,
                 ActionType.ADD_STEP,
                 ActionType.ESCALATE,
+                *((ActionType.ACCEPT,) if self.campaign.acceptance is not None else ()),
             ),
             remaining_budget=self._remaining_budget(),
         )
@@ -363,10 +402,8 @@ class CampaignRunner:
                 "tags": ["escalation"],
             }
         )
-        try:
+        with suppress(Exception):
             await self.lab.ledger.append(esc_record)
-        except Exception:
-            pass  # If ledger rejects (finalised record), that's fine — we still park.
 
         # Block until resolved.
         await event.wait()
@@ -486,6 +523,23 @@ class CampaignRunner:
             return min(completed, key=lambda r: float(r.outputs[obj.key]))
         except (TypeError, ValueError):
             return None
+
+
+def _find_workflow_steps(workflow: WorkflowTemplate, operation: str) -> list[str]:
+    """Return step_ids in the workflow that correspond to the given operation."""
+    return [step.step_id for step in workflow.steps if step.operation == operation]
+
+
+def _find_workflow_result(
+    result: WorkflowResult,
+    step_ids: Sequence[str],
+) -> StepResult | None:
+    """Return the final StepResult for one of the planner-targeted workflow steps."""
+    wanted = set(step_ids)
+    for step in reversed(result.steps):
+        if step.step_id in wanted:
+            return step
+    return None
 
 
 __all__ = ["Campaign", "CampaignRunner", "CampaignSummary"]

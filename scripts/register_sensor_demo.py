@@ -100,7 +100,14 @@ def main() -> int:
     if applied.get("bootstrap_error"):
         print(f"      bootstrap_error: {applied['bootstrap_error']}", file=sys.stderr)
 
-    # --- 3. Create the prepared campaign ------------------------------------
+    # --- 3. Fetch the sensor_shape_opt workflow from /status ----------------
+    status = _get(args.base, "/status")
+    wf = next((w for w in status.get("workflows", []) if w.get("name") == "sensor_shape_opt"), None)
+    if not wf:
+        print("[error] sensor_shape_opt workflow not found in /status", file=sys.stderr)
+        return 1
+
+    # --- 4. Create the prepared campaign ------------------------------------
     if not args.skip_campaign:
         if args.planner == "optuna":
             campaign_body = {
@@ -122,7 +129,7 @@ def main() -> int:
                         "sy_nm": {"type": "float", "low": 5.0, "high": 70.0},
                     },
                 },
-                "workflow": None,
+                "workflow": wf,
                 "autostart": False,
             }
         else:  # claude
@@ -141,20 +148,20 @@ def main() -> int:
                 "planner": "claude",
                 "planner_config": {},
                 "use_claude_policy": True,
-                "workflow": None,
+                "workflow": wf,
                 "autostart": False,
             }
-        print(f"[2/3] POST {args.base}/campaigns  (autostart=false, planner={args.planner})")
+        print(f"[4/5] POST {args.base}/campaigns  (autostart=false, planner={args.planner})")
         camp = _post(args.base, "/campaigns", campaign_body)
         print(
             f"      campaign_id={camp['campaign_id']}  "
             f"name={camp['name']!r}  status={camp.get('status', '?')}"
         )
     else:
-        print("[2/3] (skipped campaign creation)")
+        print("[4/5] (skipped campaign creation)")
 
     # --- 4. Verify by hitting /status ---------------------------------------
-    print(f"[3/3] GET  {args.base}/status  (verification)")
+    print(f"[5/5] GET  {args.base}/status  (verification)")
     s = _get(args.base, "/status")
     resources = [r["name"] for r in s["resources"]]
     workflows = [w["name"] for w in s["workflows"]]

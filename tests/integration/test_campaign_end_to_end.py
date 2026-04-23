@@ -7,7 +7,7 @@ ToolRegistry, Orchestrator, BOPlanner) but with a closed-form objective.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -18,9 +18,12 @@ from autolab import (
     Objective,
     OperationResult,
     Resource,
+    WorkflowStep,
+    WorkflowTemplate,
 )
 from autolab.operations.base import Operation
 from autolab.planners.bo import BOConfig, BOPlanner
+from autolab.planners.optuna import OptunaConfig, OptunaPlanner
 
 
 class _QuadraticOp(Operation):
@@ -28,7 +31,7 @@ class _QuadraticOp(Operation):
 
     capability = "quadratic"
     resource_kind = "computer"
-    requires = {"cores_gte": 1}
+    requires: ClassVar[dict[str, int]] = {"cores_gte": 1}
     produces_sample = True
     module = "quadratic.v1"
 
@@ -60,11 +63,35 @@ _TOOL_DECL = {
 }
 
 
+class _TargetOp(Operation):
+    capability = "target"
+    resource_kind = "computer"
+    module = "target.v1"
+
+    async def run(self, inputs: dict[str, Any]) -> OperationResult:
+        return OperationResult(status="completed", outputs={"target": 0.5})
+
+
+_TARGET_DECL = {
+    "name": "target",
+    "capability": "target",
+    "version": "0.1.0",
+    "module": "target.v1",
+    "resource": "computer",
+    "requires": {},
+    "adapter": "tests.integration.test_campaign_end_to_end:_TargetOp",
+    "produces_sample": False,
+    "destructive": False,
+    "inputs": {},
+    "outputs": {"target": {"kind": "scalar"}},
+}
+
+
 @pytest.mark.asyncio
 async def test_bo_campaign_finds_quadratic_optimum(tmp_path):
     with Lab(tmp_path / "lab", lab_id="lab-test") as lab:
         lab.register_resource(
-            Resource(name="this-machine", kind="computer", capabilities={"cores_gte": 4})
+            Resource(name="this-machine", kind="computer", capabilities={"cores_gte": 1})
         )
         decl = lab.register_tool_dict(_TOOL_DECL)
         assert decl.declaration_hash
@@ -104,3 +131,54 @@ async def test_bo_campaign_finds_quadratic_optimum(tmp_path):
 
         runs = [r for r in summary.records if r.operation == "quadratic"]
         assert runs and all(r.tool_declaration_hash == decl.declaration_hash for r in runs)
+
+
+@pytest.mark.asyncio
+async def test_optuna_campaign_runs_full_workflow_for_each_trial(tmp_path):
+    with Lab(tmp_path / "lab", lab_id="lab-test") as lab:
+        lab.register_resource(
+            Resource(name="this-machine", kind="computer", capabilities={"cores_gte": 1})
+        )
+        lab.register_tool_dict(_TARGET_DECL)
+        lab.register_tool_dict(_TOOL_DECL)
+
+        workflow = WorkflowTemplate(
+            name="targeted-quadratic",
+            steps=[
+                WorkflowStep(step_id="target", operation="target"),
+                WorkflowStep(
+                    step_id="score",
+                    operation="quadratic",
+                    depends_on=["target"],
+                    input_mappings={"target": "target.target"},
+                ),
+            ],
+        )
+        campaign = Campaign(
+            name="optuna-workflow-quadratic",
+            objective=Objective(key="score", direction="maximise"),
+            budget=3,
+            parallelism=1,
+            workflow=workflow,
+        )
+        planner = OptunaPlanner(
+            OptunaConfig(
+                operation="quadratic",
+                search_space={
+                    "x": {"type": "float", "low": 0.0, "high": 1.0},
+                    "y": {"type": "float", "low": 0.0, "high": 1.0},
+                },
+                seed=7,
+            )
+        )
+
+        summary = await lab.run_campaign(campaign, planner)
+
+        assert summary.status == "budget_exhausted"
+        assert summary.steps_run == 3
+        target_records = [r for r in summary.records if r.operation == "target"]
+        score_records = [r for r in summary.records if r.operation == "quadratic"]
+        assert len(target_records) == 3
+        assert len(score_records) == 3
+        assert [r.decision.get("trial_number") for r in score_records] == [0, 1, 2]
+        assert all(r.inputs["target"] == 0.5 for r in score_records)

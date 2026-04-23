@@ -168,6 +168,32 @@ async def test_input_mappings_wire_upstream_outputs(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_decision_overrides_are_stamped_on_target_step(tmp_path):
+    lab = _lab(tmp_path)
+    template = WorkflowTemplate(
+        name="decision-stamp",
+        steps=[
+            WorkflowStep(step_id="a", operation="echo", inputs={"value": 42}),
+            WorkflowStep(step_id="b", operation="echo", depends_on=["a"]),
+        ],
+    )
+    session = lab.new_session()
+    run = CampaignRun(lab_id=lab.lab_id, campaign_id="camp-decision", session=session)
+    result = await lab._workflow_engine.run(
+        template,
+        run,
+        decision_overrides={"b": {"planner": "optuna", "trial_number": 3}},
+    )
+
+    b_rec = result.get("b").record
+    assert b_rec.decision["workflow"] == "decision-stamp"
+    assert b_rec.decision["step_id"] == "b"
+    assert b_rec.decision["planner"] == "optuna"
+    assert b_rec.decision["trial_number"] == 3
+    lab.close()
+
+
+@pytest.mark.asyncio
 async def test_failed_step_skips_dependants(tmp_path):
     lab = _lab(tmp_path, with_fail=True)
     template = WorkflowTemplate(

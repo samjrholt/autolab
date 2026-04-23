@@ -980,6 +980,9 @@ async def submit_campaign(body: CampaignRequest, request: Request) -> dict[str, 
     lab = _lab(request)
     scheduler = _scheduler(request)
     try:
+        workflow = None
+        if body.workflow:
+            workflow = WorkflowTemplate(**body.workflow)
         campaign = Campaign(
             name=body.name,
             description=body.description,
@@ -987,6 +990,7 @@ async def submit_campaign(body: CampaignRequest, request: Request) -> dict[str, 
             acceptance=(AcceptanceCriteria(**body.acceptance) if body.acceptance else None),
             budget=body.budget,
             parallelism=body.parallelism,
+            workflow=workflow,
         )
     except ValidationError as exc:
         raise HTTPException(400, exc.errors()) from exc

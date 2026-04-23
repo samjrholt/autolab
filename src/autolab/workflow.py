@@ -147,6 +147,7 @@ class WorkflowEngine:
         run: CampaignRun,
         *,
         input_overrides: dict[str, dict[str, Any]] | None = None,
+        decision_overrides: dict[str, dict[str, Any]] | None = None,
         acceptance: AcceptanceCriteria | None = None,
         upstream_sample: Sample | None = None,
         max_parallel: int | None = None,
@@ -183,6 +184,7 @@ class WorkflowEngine:
             Maximum retries per step when the hook returns ``retry_step``.
         """
         overrides = input_overrides or {}
+        decisions = decision_overrides or {}
         order = _topological_sort(template.steps)
         result = WorkflowResult(workflow_name=template.name, campaign_id=run.campaign_id)
 
@@ -208,18 +210,22 @@ class WorkflowEngine:
             return rv  # type: ignore[return-value]
 
         async def _execute_step(
-            step: WorkflowStep, proposed: ProposedStep, gate_criteria: AcceptanceCriteria | None,
+            step: WorkflowStep,
+            proposed: ProposedStep,
+            gate_criteria: AcceptanceCriteria | None,
             parent_samples: list[Sample],
         ) -> tuple[Record, GateVerdict]:
             if sem:
                 async with sem:
                     return await self.orchestrator.run_step(
-                        proposed, run,
+                        proposed,
+                        run,
                         acceptance=gate_criteria,
                         upstream_samples=parent_samples or None,
                     )
             return await self.orchestrator.run_step(
-                proposed, run,
+                proposed,
+                run,
                 acceptance=gate_criteria,
                 upstream_samples=parent_samples or None,
             )
@@ -257,6 +263,7 @@ class WorkflowEngine:
                     "workflow": template.name,
                     "step_id": step.step_id,
                     "branch_id": step.branch_id,
+                    **decisions.get(step.step_id, {}),
                 },
             )
 
@@ -296,7 +303,9 @@ class WorkflowEngine:
 
                 # Surface actions the engine can't handle directly.
                 if action is not None and action.type in (
-                    ActionType.ADD_STEP, ActionType.ESCALATE, ActionType.REPLAN,
+                    ActionType.ADD_STEP,
+                    ActionType.ESCALATE,
+                    ActionType.REPLAN,
                 ):
                     result.deferred_actions.append((step.step_id, action))
 
@@ -360,7 +369,6 @@ def _topological_sort(steps: list[WorkflowStep]) -> list[list[str]]:
     Each batch contains steps that can run in parallel (all their
     dependencies are in earlier batches).
     """
-    step_map = {s.step_id: s for s in steps}
     in_degree: dict[str, int] = defaultdict(int)
     dependants: dict[str, list[str]] = defaultdict(list)
 
