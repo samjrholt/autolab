@@ -6,7 +6,6 @@ stack — Lab, Scheduler, EventBus — is exercised.
 
 from __future__ import annotations
 
-import os
 import time
 
 import pytest
@@ -118,6 +117,18 @@ def test_designer_offline(client):
     body = r.json()
     assert body["offline"] is True
     assert "name" in body["campaign"]
+
+
+def test_analysis_query_offline(client):
+    r = client.post(
+        "/analysis/query",
+        json={"prompt": "Compare campaign objectives over trial number"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert "chart" in body
+    assert "spec" in body
+    assert body["offline"] is True
 
 
 def test_verify_endpoint(client):

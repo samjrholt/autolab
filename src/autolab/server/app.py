@@ -88,6 +88,7 @@ from autolab.agents.claude import (
     WorkflowDesigner,
     drain_pending_claims,
 )
+from autolab.agents.claude import _safe_json as _safe_claude_json
 from autolab.campaign import Campaign
 from autolab.estimation import EstimationEngine
 from autolab.events import Event, EventBus
@@ -179,6 +180,12 @@ class DesignRequest(BaseModel):
     text: str
     previous: dict[str, Any] | None = None
     instruction: str | None = None
+
+
+class AnalysisRequest(BaseModel):
+    prompt: str
+    campaign_ids: list[str] = Field(default_factory=list)
+    limit: int = Field(default=500, ge=1, le=5000)
 
 
 class LabSetupRequest(BaseModel):
@@ -1126,6 +1133,392 @@ async def design_campaign(body: DesignRequest, request: Request) -> dict[str, An
         "offline": result.raw.offline,
         "prompt_sha256": result.raw.prompt_hash,
     }
+
+
+# ---------------------------------------------------------------------------
+# Analysis designer (Claude)
+# ---------------------------------------------------------------------------
+
+
+_ANALYSIS_SYSTEM = """You are the Analysis Designer for autolab, an autonomous
+science lab. A scientist asks for a visualization over campaign ledger records.
+Return ONLY one compact JSON object:
+
+{
+  "answer": "one short interpretation of what this chart will show",
+  "chart": {
+    "type": "line|scatter|bar",
+    "title": "short title",
+    "subtitle": "short subtitle",
+    "x": "field path",
+    "y": "field path",
+    "series_by": "field path",
+    "transform": "none|best_so_far",
+    "aggregate": "none|mean|max|min|count",
+    "filters": [{"field": "field path", "op": "eq|ne|exists", "value": "optional"}]
+  }
+}
+
+Use only fields listed in the context. Useful generic fields include:
+trial, objective_value, duration_s, campaign_name, planner, operation,
+record_status, created_at, inputs.<name>, outputs.<name>, decision.<name>.
+For convergence or objective requests, prefer x=trial, y=objective_value,
+series_by=campaign_name, transform=best_so_far. If objective_value is not
+available, choose a field from potential_objective_fields. For runtime
+requests, prefer type=bar, x=campaign_name, y=duration_s, aggregate=mean.
+Never mention unavailable fields."""
+
+
+@app.post("/analysis/query")
+async def query_analysis(body: AnalysisRequest, request: Request) -> dict[str, Any]:
+    lab = _lab(request)
+    scheduler = _scheduler(request)
+    all_records = list(lab.ledger.iter_records())
+    if body.campaign_ids:
+        allowed = set(body.campaign_ids)
+        all_records = [r for r in all_records if r.campaign_id in allowed]
+    all_records = all_records[-body.limit :]
+    campaigns = {state.campaign.id: state for state in scheduler._campaigns.values()}
+    rows = _analysis_rows(all_records, campaigns)
+    context = _analysis_context(body.prompt, rows, campaigns)
+    transport = ClaudeTransport(max_tokens=900)
+    resp = transport.call(_ANALYSIS_SYSTEM, context)
+    data = _safe_claude_json(resp.text) or {}
+    spec = _normalise_analysis_spec(data.get("chart") or {}, rows)
+    chart = _materialise_analysis_chart(spec, rows)
+    answer = str(data.get("answer") or chart.get("subtitle") or "Generated from ledger records.")
+    return {
+        "answer": answer,
+        "chart": chart,
+        "spec": spec,
+        "model": resp.model,
+        "offline": resp.offline,
+        "prompt_sha256": resp.prompt_hash,
+    }
+
+
+def _analysis_rows(records: list[Any], campaigns: dict[str, Any]) -> list[dict[str, Any]]:
+    ordered = sorted(records, key=lambda r: r.created_at)
+    record_counts: dict[str, int] = {}
+    objective_counts: dict[str, int] = {}
+    rows: list[dict[str, Any]] = []
+    for rec in ordered:
+        state = campaigns.get(rec.campaign_id or "")
+        campaign = state.campaign if state is not None else None
+        objective_key = campaign.objective.key if campaign is not None else None
+        cid = rec.campaign_id or ""
+        record_counts[cid] = record_counts.get(cid, 0) + 1
+        outputs = dict(rec.outputs or {})
+        decision = dict(rec.decision or {})
+        trial_number = decision.get("trial_number")
+        if isinstance(trial_number, int):
+            trial = trial_number + 1
+        elif objective_key and _analysis_number(outputs.get(objective_key)) is not None:
+            objective_counts[cid] = objective_counts.get(cid, 0) + 1
+            trial = objective_counts[cid]
+        else:
+            trial = record_counts[cid]
+        rows.append(
+            {
+                "record_id": rec.id,
+                "campaign_id": rec.campaign_id,
+                "campaign_name": campaign.name if campaign is not None else rec.campaign_id,
+                "planner": decision.get("planner") or "planner",
+                "objective_key": objective_key,
+                "objective_direction": (
+                    campaign.objective.direction if campaign is not None else "maximise"
+                ),
+                "objective_value": (
+                    _analysis_number(outputs.get(objective_key)) if objective_key else None
+                ),
+                "trial": trial,
+                "operation": rec.operation,
+                "record_status": rec.record_status,
+                "created_at": rec.created_at.isoformat() if rec.created_at else None,
+                "duration_s": (
+                    float(rec.duration_ms) / 1000.0 if rec.duration_ms is not None else None
+                ),
+                "inputs": dict(rec.inputs or {}),
+                "outputs": outputs,
+                "decision": decision,
+                "metadata": dict(rec.metadata or {}),
+            }
+        )
+    return rows
+
+
+def _analysis_context(
+    prompt: str,
+    rows: list[dict[str, Any]],
+    campaigns: dict[str, Any],
+) -> str:
+    field_counts: dict[str, int] = {}
+    for row in rows:
+        for field in _analysis_available_fields(row):
+            field_counts[field] = field_counts.get(field, 0) + 1
+    campaign_rows = []
+    for state in campaigns.values():
+        c = state.campaign
+        campaign_rows.append(
+            {
+                "campaign_id": c.id,
+                "name": c.name,
+                "description": c.description,
+                "objective": c.objective.model_dump(mode="json"),
+                "status": state.status,
+            }
+        )
+    sample_rows = [
+        _analysis_compact_row(r)
+        for r in rows
+        if r.get("record_status") == "completed"
+    ][-12:]
+    payload = {
+        "scientist_prompt": prompt,
+        "campaigns": campaign_rows,
+        "available_fields": sorted(field_counts),
+        "potential_objective_fields": _potential_objective_fields(sorted(field_counts)),
+        "record_count": len(rows),
+        "completed_record_count": sum(1 for r in rows if r.get("record_status") == "completed"),
+        "sample_rows": sample_rows,
+    }
+    return json.dumps(payload, default=str)[:12000]
+
+
+def _potential_objective_fields(fields: list[str]) -> list[str]:
+    hints = ("objective", "score", "fom", "hmax", "sensitivity", "yield", "accuracy", "loss")
+    out = []
+    for field in fields:
+        lowered = field.lower()
+        if lowered.startswith("outputs.") and any(hint in lowered for hint in hints):
+            out.append(field)
+    return out
+
+
+def _analysis_available_fields(row: dict[str, Any]) -> list[str]:
+    fields = [
+        "record_id",
+        "campaign_id",
+        "campaign_name",
+        "planner",
+        "objective_key",
+        "objective_direction",
+        "objective_value",
+        "trial",
+        "operation",
+        "record_status",
+        "created_at",
+        "duration_s",
+    ]
+    for root in ("inputs", "outputs", "decision", "metadata"):
+        for key, value in (row.get(root) or {}).items():
+            if isinstance(value, str | int | float | bool) or value is None:
+                fields.append(f"{root}.{key}")
+    return fields
+
+
+def _analysis_compact_row(row: dict[str, Any]) -> dict[str, Any]:
+    compact = {k: row.get(k) for k in _analysis_available_fields(row) if "." not in k}
+    for root in ("inputs", "outputs", "decision"):
+        values = {}
+        for key, value in (row.get(root) or {}).items():
+            if isinstance(value, str | int | float | bool) or value is None:
+                values[key] = value
+        if values:
+            compact[root] = values
+    return compact
+
+
+def _normalise_analysis_spec(spec: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    available = {field for row in rows for field in _analysis_available_fields(row)}
+    chart_type = str(spec.get("type") or "line").lower()
+    if chart_type not in {"line", "scatter", "bar"}:
+        chart_type = "line"
+    x_field = str(spec.get("x") or "trial")
+    y_field = str(spec.get("y") or "objective_value")
+    if x_field not in available:
+        x_field = "trial"
+    if y_field not in available:
+        y_field = _first_numeric_field(rows) or "objective_value"
+    elif not any(_analysis_number(_analysis_value(row, y_field)) is not None for row in rows):
+        y_field = _first_numeric_field(rows) or y_field
+    series_by = str(spec.get("series_by") or "campaign_name")
+    if series_by not in available:
+        series_by = "campaign_name"
+    transform = str(spec.get("transform") or "none").lower()
+    if transform not in {"none", "best_so_far"}:
+        transform = "none"
+    aggregate = str(spec.get("aggregate") or ("mean" if chart_type == "bar" else "none")).lower()
+    if aggregate not in {"none", "mean", "max", "min", "count"}:
+        aggregate = "none"
+    filters = spec.get("filters") if isinstance(spec.get("filters"), list) else []
+    return {
+        "type": chart_type,
+        "title": str(spec.get("title") or "Ledger analysis")[:120],
+        "subtitle": str(spec.get("subtitle") or "")[:240],
+        "x": x_field,
+        "y": y_field,
+        "series_by": series_by,
+        "transform": transform,
+        "aggregate": aggregate,
+        "filters": filters[:6],
+    }
+
+
+def _materialise_analysis_chart(spec: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    filtered = [row for row in rows if _analysis_row_matches(row, spec.get("filters") or [])]
+    series = (
+        _analysis_bar_series(filtered, spec)
+        if spec["type"] == "bar"
+        else _analysis_point_series(filtered, spec)
+    )
+    return {
+        "type": spec["type"],
+        "title": spec["title"],
+        "subtitle": spec["subtitle"],
+        "x_label": spec["x"],
+        "y_label": spec["y"],
+        "series": series,
+    }
+
+
+def _analysis_point_series(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, Any]]:
+    groups: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        x = _analysis_value(row, spec["x"])
+        y = _analysis_number(_analysis_value(row, spec["y"]))
+        if x is None or y is None:
+            continue
+        label = str(_analysis_value(row, spec["series_by"]) or "series")
+        groups.setdefault(label, []).append({"x": x, "y": y, "row": row})
+    out = []
+    for idx, (label, points) in enumerate(groups.items()):
+        points = sorted(points, key=lambda p: _analysis_sort_value(p["x"]))
+        if spec.get("transform") == "best_so_far":
+            direction = str(points[0]["row"].get("objective_direction") or "maximise")
+            best: float | None = None
+            for point in points:
+                value = float(point["y"])
+                if best is None or (value < best if direction == "minimise" else value > best):
+                    best = value
+                point["y"] = best
+        out.append(
+            {
+                "label": label,
+                "color": _ANALYSIS_COLORS[idx % len(_ANALYSIS_COLORS)],
+                "points": [
+                    {
+                        "x": p["x"],
+                        "y": p["y"],
+                        "record_id": p["row"].get("record_id"),
+                        "tooltip": _analysis_tooltip(p["row"], spec, p["x"], p["y"]),
+                    }
+                    for p in points
+                ],
+            }
+        )
+    return out
+
+
+def _analysis_bar_series(rows: list[dict[str, Any]], spec: dict[str, Any]) -> list[dict[str, Any]]:
+    groups: dict[str, list[float]] = {}
+    for row in rows:
+        label = str(_analysis_value(row, spec["x"]) or "value")
+        if spec.get("aggregate") == "count":
+            groups.setdefault(label, []).append(1.0)
+            continue
+        value = _analysis_number(_analysis_value(row, spec["y"]))
+        if value is not None:
+            groups.setdefault(label, []).append(value)
+    points = []
+    for label, values in groups.items():
+        aggregate = spec.get("aggregate")
+        if aggregate == "max":
+            y = max(values)
+        elif aggregate == "min":
+            y = min(values)
+        elif aggregate == "count":
+            y = float(len(values))
+        else:
+            y = sum(values) / len(values)
+        points.append({"x": label, "y": y, "tooltip": f"{label}: {y:.5g}"})
+    return [{"label": spec["y"], "color": _ANALYSIS_COLORS[0], "points": points}]
+
+
+def _analysis_row_matches(row: dict[str, Any], filters: list[Any]) -> bool:
+    for raw in filters:
+        if not isinstance(raw, dict):
+            continue
+        field = str(raw.get("field") or "")
+        op = str(raw.get("op") or "eq")
+        expected = raw.get("value")
+        value = _analysis_value(row, field)
+        if op == "exists" and value is None:
+            return False
+        if op == "eq" and value != expected:
+            return False
+        if op == "ne" and value == expected:
+            return False
+    return True
+
+
+def _analysis_value(row: dict[str, Any], field: str) -> Any:
+    aliases = {
+        "objective": "objective_value",
+        "campaign": "campaign_name",
+        "duration": "duration_s",
+    }
+    current: Any = row
+    for part in aliases.get(field, field).split("."):
+        if isinstance(current, dict):
+            current = current.get(part)
+        else:
+            return None
+    return current
+
+
+def _analysis_number(value: Any) -> float | None:
+    if isinstance(value, bool):
+        return None
+    try:
+        n = float(value)
+    except (TypeError, ValueError):
+        return None
+    return n if n == n and n not in {float("inf"), float("-inf")} else None
+
+
+def _analysis_sort_value(value: Any) -> Any:
+    numeric = _analysis_number(value)
+    if numeric is not None:
+        return numeric
+    if isinstance(value, str):
+        with suppress(ValueError):
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    return str(value)
+
+
+def _first_numeric_field(rows: list[dict[str, Any]]) -> str | None:
+    counts: dict[str, int] = {}
+    for row in rows:
+        for field in _analysis_available_fields(row):
+            if _analysis_number(_analysis_value(row, field)) is not None:
+                counts[field] = counts.get(field, 0) + 1
+    if not counts:
+        return None
+    objective_like = _potential_objective_fields(list(counts))
+    if objective_like:
+        return max(objective_like, key=lambda field: counts.get(field, 0))
+    return max(counts, key=counts.get)
+
+
+def _analysis_tooltip(row: dict[str, Any], spec: dict[str, Any], x: Any, y: Any) -> str:
+    return (
+        f"{row.get('campaign_name')} | {row.get('operation')} | "
+        f"{spec['x']}={x} | {spec['y']}={y:.5g}"
+    )
+
+
+_ANALYSIS_COLORS = ["#c96342", "#6b8fd6", "#7fd67f", "#e8b062", "#d66666", "#b58bd9"]
 
 
 # ---------------------------------------------------------------------------
