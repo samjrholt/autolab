@@ -59,6 +59,7 @@ dependencies = [
     # Jupyter kernel (Ledger Chat)
     "jupyter_client>=8.6",
     "ipykernel>=6.29",
+    "matplotlib>=3.8",
     # Env file loading
     "python-dotenv>=1.0",
 ]
