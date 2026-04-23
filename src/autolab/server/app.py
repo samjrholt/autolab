@@ -1176,7 +1176,7 @@ async def query_analysis(body: AnalysisRequest, request: Request) -> dict[str, A
     lab = _lab(request)
     scheduler = _scheduler(request)
     all_records = list(lab.ledger.iter_records())
-    if body.campaign_ids:
+    if body.campaign_ids is not None:
         allowed = set(body.campaign_ids)
         all_records = [r for r in all_records if r.campaign_id in allowed]
     all_records = all_records[-body.limit :]
@@ -1400,6 +1400,7 @@ def _analysis_point_series(
             direction = str(points[0]["row"].get("objective_direction") or "maximise")
             best: float | None = None
             for point in points:
+                point["raw_y"] = float(point["y"])
                 value = float(point["y"])
                 if best is None or (value < best if direction == "minimise" else value > best):
                     best = value
@@ -1413,7 +1414,7 @@ def _analysis_point_series(
                         "x": p["x"],
                         "y": p["y"],
                         "record_id": p["row"].get("record_id"),
-                        "tooltip": _analysis_tooltip(p["row"], spec, p["x"], p["y"]),
+                        "tooltip": _analysis_tooltip(p["row"], spec, p["x"], p["y"], p.get("raw_y")),
                     }
                     for p in points
                 ],
@@ -1513,11 +1514,14 @@ def _first_numeric_field(rows: list[dict[str, Any]]) -> str | None:
     return max(counts, key=counts.get)
 
 
-def _analysis_tooltip(row: dict[str, Any], spec: dict[str, Any], x: Any, y: Any) -> str:
-    return (
-        f"{row.get('campaign_name')} | {row.get('operation')} | "
-        f"{spec['x']}={x} | {spec['y']}={y:.5g}"
-    )
+def _analysis_tooltip(row: dict[str, Any], spec: dict[str, Any], x: Any, y: Any, raw_y: Any = None) -> str:
+    base = f"{row.get('campaign_name')} | {row.get('operation')} | {spec['x']}={x}"
+    try:
+        if raw_y is not None and abs(float(y) - float(raw_y)) > 1e-9:
+            return f"{base} | max={y:.5g} (raw={float(raw_y):.5g})"
+    except (ValueError, TypeError):
+        pass
+    return f"{base} | {spec['y']}={y:.5g}"
 
 
 _ANALYSIS_COLORS = ["#c96342", "#6b8fd6", "#7fd67f", "#e8b062", "#d66666", "#b58bd9"]

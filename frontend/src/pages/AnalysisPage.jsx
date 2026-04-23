@@ -288,7 +288,8 @@ export default function AnalysisPage({ campaigns = [], records = [] }) {
     setError("");
     setMessages((previous) => [...previous, { role: "user", content: query }].slice(-10));
     try {
-      const next = await postJson("/analysis/query", { prompt: query });
+      const body = { prompt: query, campaign_ids: campaigns.map(c => c.campaign_id || c.id).filter(Boolean) };
+        const next = await postJson("/analysis/query", body);
       setResult(next);
       setMessages((previous) => [
         ...previous,
@@ -372,3 +373,4 @@ export default function AnalysisPage({ campaigns = [], records = [] }) {
     </>
   );
 }
+
