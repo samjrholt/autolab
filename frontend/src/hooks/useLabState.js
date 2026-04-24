@@ -12,17 +12,18 @@ function normaliseRecord(record) {
 
 function normaliseCampaign(campaign) {
   const summary = campaign.summary || {};
+  const objective = campaign.objective || {
+    key: campaign.objective_key,
+    direction: campaign.direction || "maximise",
+  };
   return {
     ...campaign,
-    objective: campaign.objective || {
-      key: campaign.objective_key,
-      direction: campaign.direction || "maximise",
-    },
+    objective,
     planner: campaign.planner || campaign.planner_name || "planner",
     completed_records: campaign.completed_records ?? summary.records?.length ?? 0,
     total_records: campaign.total_records ?? 0,
     steps_run: campaign.steps_run ?? summary.steps_run ?? null,
-    best_value: campaign.best_value ?? summary.best_outputs?.[campaign.objective_key],
+    best_value: campaign.best_value ?? summary.best_outputs?.[objective.key],
   };
 }
 

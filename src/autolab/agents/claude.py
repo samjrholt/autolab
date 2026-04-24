@@ -32,6 +32,7 @@ real Claude call.
 from __future__ import annotations
 
 import ast
+import asyncio
 import hashlib
 import json
 import os
@@ -144,6 +145,36 @@ class ClaudeTransport:
 
             self._client = anthropic.Anthropic(api_key=self._api_key)
         resp = self._client.messages.create(
+            model=self.model,
+            max_tokens=self.max_tokens,
+            system=system,
+            messages=[{"role": "user", "content": user}],
+        )
+        text_parts = [
+            b.text for b in resp.content if getattr(b, "type", "text") == "text"
+        ]
+        return ClaudeResponse(
+            text="".join(text_parts),
+            model=self.model,
+            prompt_hash=_hash_prompt(system, user),
+            offline=False,
+        )
+
+    async def acall(self, system: str, user: str) -> ClaudeResponse:
+        """Async version of call() — runs the Anthropic SDK in a thread pool."""
+        if self.offline:
+            return ClaudeResponse(
+                text=_offline_response(system, user),
+                model=f"{self.model}/offline",
+                prompt_hash=_hash_prompt(system, user),
+                offline=True,
+            )
+        if self._client is None:
+            import anthropic
+
+            self._client = anthropic.Anthropic(api_key=self._api_key)
+        resp = await asyncio.to_thread(
+            self._client.messages.create,
             model=self.model,
             max_tokens=self.max_tokens,
             system=system,
@@ -842,6 +873,29 @@ class CampaignDesigner:
             raw=resp,
         )
 
+    async def adesign(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> DesignResult:
+        user = _describe_design_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = await self._transport.acall(_DESIGNER_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "designer:draft", "campaign_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        return DesignResult(
+            campaign_json=dict(data.get("campaign") or {}),
+            workflow_json=dict(data["workflow"]) if data.get("workflow") else None,
+            questions=[str(q) for q in data.get("questions") or []],
+            ready_to_apply=bool(data.get("ready_to_apply", True)),
+            notes=str(data.get("notes") or ""),
+            raw=resp,
+        )
+
 
 def _describe_design_context(text: str, lab: Lab | None) -> str:
     lines = ["User goal (verbatim):", text, "", "Tool catalogue:"]
@@ -1143,6 +1197,30 @@ class LabSetupDesigner:
             raw=resp,
         )
 
+    async def adesign(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> LabSetupResult:
+        user = _describe_setup_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = await self._transport.acall(_LAB_SETUP_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "setup:draft", "lab_setup_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        return LabSetupResult(
+            resources=list(data.get("resources") or []),
+            operations=list(data.get("operations") or []),
+            workflow=dict(data["workflow"]) if data.get("workflow") else None,
+            questions=[str(q) for q in data.get("questions") or []],
+            ready_to_apply=bool(data.get("ready_to_apply", True)),
+            notes=str(data.get("notes") or ""),
+            raw=resp,
+        )
+
 
 def _describe_setup_context(text: str, lab: Lab | None) -> str:
     lines = ["Scientist description (verbatim):", text, ""]
@@ -1254,9 +1332,23 @@ class ResourceDesigner:
         if self._lab is not None:
             _persist_claim(self._lab, "designer:resource", "resource_designer", user, resp, loose=True)
         data = _safe_json(resp.text) or {}
-        # The top-level object may or may not contain a "notes" key; strip it
-        # when we hand the body back to the caller so the "resource" dict is
-        # directly postable to /resources.
+        notes = str(data.pop("notes", "") or "")
+        return ResourceProposal(resource=dict(data), notes=notes, raw=resp)
+
+    async def adesign(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> ResourceProposal:
+        user = _describe_resource_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = await self._transport.acall(_RESOURCE_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "designer:resource", "resource_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
         return ResourceProposal(resource=dict(data), notes=notes, raw=resp)
 
@@ -1338,6 +1430,23 @@ class ToolDesigner:
         if previous or instruction:
             user = _append_refinement(user, previous, instruction)
         resp = self._transport.call(_TOOL_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "designer:tool", "tool_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        notes = str(data.pop("notes", "") or "")
+        return ToolProposal(tool=dict(data), notes=notes, raw=resp)
+
+    async def adesign(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> ToolProposal:
+        user = _describe_tool_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = await self._transport.acall(_TOOL_SYSTEM, user)
         if self._lab is not None:
             _persist_claim(self._lab, "designer:tool", "tool_designer", user, resp, loose=True)
         data = _safe_json(resp.text) or {}
@@ -1437,6 +1546,23 @@ class WorkflowDesigner:
         if previous or instruction:
             user = _append_refinement(user, previous, instruction)
         resp = self._transport.call(_WORKFLOW_SYSTEM, user)
+        if self._lab is not None:
+            _persist_claim(self._lab, "designer:workflow", "workflow_designer", user, resp, loose=True)
+        data = _safe_json(resp.text) or {}
+        notes = str(data.pop("notes", "") or "")
+        return WorkflowProposal(workflow=dict(data), notes=notes, raw=resp)
+
+    async def adesign(
+        self,
+        text: str,
+        *,
+        previous: dict[str, Any] | None = None,
+        instruction: str | None = None,
+    ) -> WorkflowProposal:
+        user = _describe_workflow_context(text, self._lab)
+        if previous or instruction:
+            user = _append_refinement(user, previous, instruction)
+        resp = await self._transport.acall(_WORKFLOW_SYSTEM, user)
         if self._lab is not None:
             _persist_claim(self._lab, "designer:workflow", "workflow_designer", user, resp, loose=True)
         data = _safe_json(resp.text) or {}

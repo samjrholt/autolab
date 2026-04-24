@@ -31,20 +31,42 @@ function MessageBubble({ role, children }) {
   );
 }
 
-function ProposalCard({ title, items }) {
+function ProposalCard({ title, items, stubNote }) {
   if (!items || items.length === 0) return null;
   return (
     <div className="card" style={{ padding: 12, marginBottom: 10 }}>
       <div
         style={{
-          fontSize: 10,
-          textTransform: "uppercase",
-          letterSpacing: 0.07,
-          color: "var(--color-tertiary)",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
           marginBottom: 8,
         }}
       >
-        {title}
+        <div
+          style={{
+            fontSize: 10,
+            textTransform: "uppercase",
+            letterSpacing: 0.07,
+            color: "var(--color-tertiary)",
+          }}
+        >
+          {title}
+        </div>
+        {stubNote && (
+          <span
+            style={{
+              fontSize: 10,
+              color: "var(--color-status-amber)",
+              background: "rgba(232,176,98,0.15)",
+              border: "1px solid rgba(232,176,98,0.4)",
+              borderRadius: 3,
+              padding: "1px 5px",
+            }}
+          >
+            stub — mock data until wired up
+          </span>
+        )}
       </div>
       <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
         {items.map((item, i) => (
@@ -87,6 +109,7 @@ export default function AssistantPage({ status, refresh }) {
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [proposal, setProposal] = useState(null);
+  const [labDescription, setLabDescription] = useState("");
   const [registering, setRegistering] = useState(false);
   const [registered, setRegistered] = useState(false);
 
@@ -113,7 +136,12 @@ export default function AssistantPage({ status, refresh }) {
     setMessages((m) => [...m, { role: "user", content: text }]);
 
     try {
-      const result = await postJson("/lab/setup", { text });
+      const isFollowUp = Boolean(labDescription && proposal);
+      if (!labDescription) setLabDescription(text);
+      const body = isFollowUp
+        ? { text: labDescription, instruction: text, previous: proposal }
+        : { text };
+      const result = await postJson("/lab/setup", body);
       setProposal(result);
       setRegistered(false);
 
@@ -251,7 +279,7 @@ export default function AssistantPage({ status, refresh }) {
           {proposal ? (
             <>
               <ProposalCard title="Resources" items={proposal.resources || []} />
-              <ProposalCard title="Capabilities" items={proposal.operations || []} />
+              <ProposalCard title="Capabilities" items={proposal.operations || []} stubNote />
               <ProposalCard title="Workflow" items={proposal.workflow ? [proposal.workflow] : []} />
               {proposal.questions?.length ? (
                 <div className="card" style={{ padding: 14, fontSize: 12, color: "var(--color-secondary)" }}>

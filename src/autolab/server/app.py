@@ -1121,7 +1121,7 @@ async def intervene(
 async def design_campaign(body: DesignRequest, request: Request) -> dict[str, Any]:
     lab = _lab(request)
     designer = CampaignDesigner(lab=lab, transport=ClaudeTransport())
-    result = designer.design(
+    result = await designer.adesign(
         body.text,
         previous=body.previous,
         instruction=body.instruction,
@@ -1187,7 +1187,7 @@ async def query_analysis(body: AnalysisRequest, request: Request) -> dict[str, A
     rows = _analysis_rows(all_records, campaigns)
     context = _analysis_context(body.prompt, rows, campaigns)
     transport = ClaudeTransport(max_tokens=900)
-    resp = transport.call(_ANALYSIS_SYSTEM, context)
+    resp = await transport.acall(_ANALYSIS_SYSTEM, context)
     data = _safe_claude_json(resp.text) or {}
     spec = _normalise_analysis_spec(data.get("chart") or {}, rows)
     chart = _materialise_analysis_chart(spec, rows)
@@ -1540,7 +1540,7 @@ async def design_lab_setup(body: LabSetupRequest, request: Request) -> dict[str,
     """Describe your lab in plain language → Claude proposes resources and operations."""
     lab = _lab(request)
     designer = LabSetupDesigner(lab=lab, transport=ClaudeTransport())
-    result = designer.design(
+    result = await designer.adesign(
         body.text,
         previous=body.previous,
         instruction=body.instruction,
@@ -1562,7 +1562,7 @@ async def design_resource(body: EntityDesignRequest, request: Request) -> dict[s
     """Propose (or refine) a single Resource from a natural-language description."""
     lab = _lab(request)
     designer = ResourceDesigner(lab=lab, transport=ClaudeTransport())
-    result = designer.design(
+    result = await designer.adesign(
         body.text,
         previous=body.previous,
         instruction=body.instruction,
@@ -1580,7 +1580,7 @@ async def design_tool(body: EntityDesignRequest, request: Request) -> dict[str, 
     """Propose (or refine) a single Tool declaration from a natural-language description."""
     lab = _lab(request)
     designer = ToolDesigner(lab=lab, transport=ClaudeTransport())
-    result = designer.design(
+    result = await designer.adesign(
         body.text,
         previous=body.previous,
         instruction=body.instruction,
@@ -1598,7 +1598,7 @@ async def design_workflow(body: EntityDesignRequest, request: Request) -> dict[s
     """Propose (or refine) a single WorkflowTemplate from a natural-language description."""
     lab = _lab(request)
     designer = WorkflowDesigner(lab=lab, transport=ClaudeTransport())
-    result = designer.design(
+    result = await designer.adesign(
         body.text,
         previous=body.previous,
         instruction=body.instruction,

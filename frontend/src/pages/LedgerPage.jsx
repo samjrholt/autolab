@@ -120,7 +120,24 @@ export default function LedgerPage({ records, onSelectRecord, campaignIdFilter }
                   {r.operation || "-"}
                 </td>
                 <td>{statusChip(rowStatus(r))}</td>
-                <td style={{ color: "var(--color-muted)", fontSize: 12 }}>{r.module || "-"}</td>
+                <td style={{ color: "var(--color-muted)", fontSize: 12 }}>
+                  {r.module || "-"}
+                  {r.module?.includes(".stub.") && (
+                    <span
+                      style={{
+                        marginLeft: 6,
+                        fontSize: 10,
+                        color: "var(--color-status-amber)",
+                        background: "rgba(232,176,98,0.15)",
+                        border: "1px solid rgba(232,176,98,0.4)",
+                        borderRadius: 3,
+                        padding: "1px 4px",
+                      }}
+                    >
+                      stub
+                    </span>
+                  )}
+                </td>
                 <td style={{ color: "var(--color-muted)", fontSize: 11, fontFamily: "var(--font-mono)" }}>
                   {r.campaign_id ? `${r.campaign_id.slice(0, 12)}...` : "-"}
                 </td>
