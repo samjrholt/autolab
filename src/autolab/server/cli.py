@@ -47,7 +47,7 @@ def main() -> None:
         default=os.environ.get("AUTOLAB_BOOTSTRAP", "none"),
         help=(
             "Bootstrap mode. Default is 'none' — the Lab boots empty with "
-            "'this-pc' as the only default Resource. Demo content is "
+            "'local-computer' as the only default Resource. Demo content is "
             "registered on top via POST /bootstraps/apply. Valid modes: "
             "none | mammos | demo_quadratic | add_demo | wsl_demo | "
             "wsl_ssh_demo | superellipse | <module>:<func>"

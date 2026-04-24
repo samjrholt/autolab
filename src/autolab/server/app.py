@@ -54,7 +54,7 @@ or any ``module:function`` dotted path called with the Lab as its
 only argument.
 
 Regardless of mode, every Lab boots with one default resource:
-``this-pc`` — the host machine — auto-registered before the mode runs.
+``local-computer`` - the host running autolab - auto-registered before the mode runs.
 """
 
 from __future__ import annotations
@@ -120,11 +120,19 @@ log = logging.getLogger("autolab.server")
 
 class ResourceRequest(BaseModel):
     name: str
-    kind: str
+    kind: str | None = None
+    backend: str | None = None
+    connection: dict[str, Any] = Field(default_factory=dict)
+    tags: dict[str, Any] = Field(default_factory=dict)
     capabilities: dict[str, Any] = Field(default_factory=dict)
     description: str | None = None
     asset_id: str | None = None
     typical_operation_durations: dict[str, int] = Field(default_factory=dict)
+    host: str | None = None
+    user: str | None = None
+    port: int | None = None
+    remote_root: str | None = None
+    working_dir: str | None = None
 
 
 class WorkflowRequest(BaseModel):
@@ -210,6 +218,10 @@ class EntityDesignRequest(BaseModel):
     text: str = ""
     previous: dict[str, Any] | None = None
     instruction: str | None = None
+
+
+class CapabilitySmokeTestRequest(BaseModel):
+    inputs: dict[str, Any] = Field(default_factory=dict)
 
 
 # ---------------------------------------------------------------------------
@@ -432,7 +444,7 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
         sys.path[0] if sys.path else "(empty)",
     )
     if mode in ("none", ""):
-        # No default tools, no default workflows. "this-pc" is the only
+        # No default capabilities, no default workflows. "local-computer" is the only
         # default resource and is registered by _auto_register_this_pc()
         # before this function runs. Demos register their own entities
         # on top via POST /bootstraps/apply — and they do it narrowly, so
@@ -547,30 +559,28 @@ def _apply_bootstrap_mode(lab: Lab, mode: str) -> None:
 
 
 def _auto_register_this_pc(lab: Lab) -> None:
-    """Register the host machine as a default ``this-pc`` resource.
+    """Register the host machine as a generic default local Resource.
 
-    Idempotent: if a resource named ``this-pc`` already exists in the
+    Idempotent: if a resource named ``local-computer`` already exists in the
     ResourceManager (restart case — rehydrated from the ledger), this is a
     no-op. Every fresh Lab boots with exactly one resource so the Console
     is never empty on first run.
     """
-    import platform
-
     existing = {r.name for r in lab.resources.list()}
-    if "this-pc" in existing:
+    if "local-computer" in existing:
         return
     caps: dict[str, Any] = {
-        "hostname": platform.node() or "localhost",
-        "os": f"{platform.system()} {platform.release()}",
+        "backend": "local",
+        "connection": {"working_dir": ".autolab-work"},
+        "tags": {"role": "autolab_host"},
         "cpu_count": os.cpu_count() or 1,
-        "python": platform.python_version(),
     }
     lab.register_resource(
         Resource(
-            name="this-pc",
+            name="local-computer",
             kind="computer",
             capabilities=caps,
-            description="The machine autolab is running on. Auto-registered at boot.",
+            description="Local computer running the autolab service. Auto-registered at boot.",
         )
     )
 
@@ -733,6 +743,7 @@ async def status(request: Request) -> dict[str, Any]:
         "total_records": len(records),
         "resources": lab.resources.status(),
         "tools": [_tool_row(d) for d in lab.tools.list()],
+        "capabilities": [_tool_row(d) for d in lab.tools.list()],
         "campaigns": scheduler.status(),
         "escalations": escalations,
         "workflows": [w.model_dump(mode="json") for w in lab._workflows.values()],
@@ -766,6 +777,46 @@ def _tool_row(decl: Any) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+def _normalise_resource_request(body: ResourceRequest) -> Resource:
+    """Convert user-facing Resource fields into the storage-compatible model."""
+    raw = body.model_dump(exclude_none=True)
+    backend = raw.pop("backend", None)
+    connection = dict(raw.pop("connection", {}) or {})
+    tags = dict(raw.pop("tags", {}) or {})
+    capabilities = dict(raw.pop("capabilities", {}) or {})
+
+    for key in ("host", "user", "port", "remote_root", "working_dir"):
+        if key in raw:
+            connection[key] = raw.pop(key)
+
+    if backend:
+        capabilities["backend"] = backend
+    if connection:
+        capabilities["connection"] = connection
+    if tags:
+        capabilities["tags"] = tags
+        capabilities.update({k: v for k, v in tags.items() if k not in capabilities})
+
+    kind = raw.pop("kind", None) or _infer_resource_kind(backend, capabilities)
+    return Resource(
+        name=raw["name"],
+        kind=kind,
+        capabilities=capabilities,
+        description=raw.get("description"),
+        asset_id=raw.get("asset_id"),
+        typical_operation_durations=raw.get("typical_operation_durations", {}),
+    )
+
+
+def _infer_resource_kind(backend: str | None, capabilities: dict[str, Any]) -> str:
+    scheduler = str(capabilities.get("scheduler") or "").lower()
+    if backend == "slurm" or scheduler == "slurm":
+        return "computer"
+    if backend in {"local", "ssh_exec", "websocket", "mcp", "custom"}:
+        return "computer"
+    return "computer"
+
+
 @app.get("/resources")
 async def list_resources(request: Request) -> list[dict[str, Any]]:
     return _lab(request).resources.status()
@@ -775,7 +826,7 @@ async def list_resources(request: Request) -> list[dict[str, Any]]:
 async def add_resource(body: ResourceRequest, request: Request) -> dict[str, Any]:
     lab = _lab(request)
     try:
-        resource = Resource(**body.model_dump())
+        resource = _normalise_resource_request(body)
         lab.register_resource(resource)
     except (ValueError, ValidationError) as exc:
         raise HTTPException(400, str(exc)) from exc
@@ -810,6 +861,36 @@ async def list_tools(request: Request) -> list[dict[str, Any]]:
     return [_tool_row(d) for d in _lab(request).tools.list()]
 
 
+@app.get("/capabilities")
+async def list_capabilities(request: Request) -> list[dict[str, Any]]:
+    return await list_tools(request)
+
+
+def _normalise_capability_spec(body: dict[str, Any]) -> dict[str, Any]:
+    spec = dict(body)
+    if "capability" in spec and "name" not in spec:
+        spec["name"] = spec["capability"]
+    elif "name" in spec and "capability" not in spec:
+        spec["capability"] = spec["name"]
+    if "resource_kind" in spec and "resource" not in spec:
+        spec["resource"] = spec["resource_kind"]
+    if "resource" in spec and "resource_kind" not in spec:
+        spec["resource_kind"] = spec["resource"]
+    if "resource_requirements" in spec and "requires" not in spec:
+        spec["requires"] = spec["resource_requirements"]
+    if "requires" in spec and "resource_requirements" not in spec:
+        spec["resource_requirements"] = spec["requires"]
+    spec.setdefault("adapter", "dynamic")
+    return spec
+
+
+def _is_dynamic_capability(spec: dict[str, Any]) -> bool:
+    adapter = str(spec.get("adapter") or "").lower()
+    return adapter in {"dynamic", "dynamic_stub", "shell_command", "command"} or bool(
+        spec.get("command_template")
+    )
+
+
 @app.post("/tools/register-yaml")
 async def register_yaml_tool(body: dict[str, Any], request: Request) -> dict[str, Any]:
     """Register a YAML/JSON tool declaration POSTed as JSON.
@@ -818,16 +899,22 @@ async def register_yaml_tool(body: dict[str, Any], request: Request) -> dict[str
     same scientist-named identifier; the ToolDeclaration loader requires them.
     """
     lab = _lab(request)
-    # Normalise: name and capability are the same identifier in our model.
-    if "capability" in body and "name" not in body:
-        body = {**body, "name": body["capability"]}
-    elif "name" in body and "capability" not in body:
-        body = {**body, "capability": body["name"]}
+    body = _normalise_capability_spec(body)
     try:
-        decl = lab.register_tool_dict(body)
+        if _is_dynamic_capability(body):
+            _register_dynamic_operation(lab, body)
+            decl = lab.tools.get(body["capability"])
+        else:
+            decl = lab.register_tool_dict(body)
     except (ValueError, KeyError) as exc:
         raise HTTPException(400, str(exc)) from exc
+    lab.events.publish(Event(kind="capability.registered", payload={"capability": decl.capability}))
     return _tool_row(decl)
+
+
+@app.post("/capabilities/register")
+async def register_capability(body: dict[str, Any], request: Request) -> dict[str, Any]:
+    return await register_yaml_tool(body, request)
 
 
 @app.post("/tools/register")
@@ -840,6 +927,7 @@ async def register_simple_tool(body: dict[str, Any], request: Request) -> dict[s
     at the same capability name after unregistering.
     """
     lab = _lab(request)
+    body = _normalise_capability_spec(body)
     if "capability" not in body:
         raise HTTPException(400, "capability is required")
     if lab.tools.has(body["capability"]):
@@ -848,7 +936,41 @@ async def register_simple_tool(body: dict[str, Any], request: Request) -> dict[s
         _register_dynamic_operation(lab, body)
     except Exception as exc:
         raise HTTPException(400, f"failed to register tool: {exc}") from exc
+    lab.events.publish(Event(kind="capability.registered", payload={"capability": body["capability"]}))
     return {"ok": True, "capability": body["capability"]}
+
+
+@app.post("/capabilities/{name}/smoke-test")
+async def smoke_test_capability(
+    name: str, body: CapabilitySmokeTestRequest, request: Request
+) -> dict[str, Any]:
+    """Run one capability through the orchestrator and return its Record."""
+    lab = _lab(request)
+    if not lab.tools.has(name):
+        raise HTTPException(404, f"capability {name!r} is not registered")
+    import uuid
+
+    from autolab.orchestrator import CampaignRun
+
+    session = lab.new_session()
+    run = CampaignRun(
+        lab_id=lab.lab_id,
+        campaign_id=f"smoke-{uuid.uuid4().hex[:8]}",
+        session=session,
+    )
+    step = ProposedStep(
+        operation=name,
+        inputs=dict(body.inputs),
+        decision={"triggered_by": "smoke_test"},
+    )
+    rec, gate = await lab.orchestrator.run_step(step, run)
+    return {
+        "ok": rec.record_status == "completed",
+        "record_id": rec.id,
+        "record": rec.model_dump(mode="json"),
+        "outputs": rec.outputs,
+        "gate": gate.result if gate else None,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1570,6 +1692,8 @@ async def design_resource(body: EntityDesignRequest, request: Request) -> dict[s
     return {
         "resource": result.resource,
         "notes": result.notes,
+        "questions": result.questions,
+        "ready_to_apply": result.ready_to_apply,
         "model": result.raw.model,
         "offline": result.raw.offline,
     }
@@ -1588,9 +1712,16 @@ async def design_tool(body: EntityDesignRequest, request: Request) -> dict[str, 
     return {
         "tool": result.tool,
         "notes": result.notes,
+        "questions": result.questions,
+        "ready_to_apply": result.ready_to_apply,
         "model": result.raw.model,
         "offline": result.raw.offline,
     }
+
+
+@app.post("/capabilities/design")
+async def design_capability(body: EntityDesignRequest, request: Request) -> dict[str, Any]:
+    return await design_tool(body, request)
 
 
 @app.post("/workflows/design")
@@ -1715,10 +1846,10 @@ async def apply_bootstrap(body: BootstrapApplyRequest, request: Request) -> dict
 def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
     """Register a dynamically defined Operation from a setup proposal.
 
-    Creates a simple Operation subclass that returns mock outputs matching
-    the declared schema. The scientist can later replace this with a real
-    adapter that talks to their actual equipment.
+    ``adapter=dynamic`` creates an explicit mock. ``adapter=shell_command`` or
+    ``command_template`` creates a runnable command-backed capability.
     """
+    spec = _normalise_capability_spec(spec)
     capability = spec["capability"]
     resource_kind = spec.get("resource_kind")
     module = spec.get("module", f"{capability}.stub.v1")
@@ -1726,8 +1857,17 @@ def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
     destructive = spec.get("destructive", False)
     duration = spec.get("typical_duration_s", 5)
     output_schema = spec.get("outputs", {})
+    requires = spec.get("requires", {}) or {}
+    adapter = str(spec.get("adapter") or "dynamic").lower()
+    command_template = spec.get("command_template") or spec.get("command")
+    declared_outputs = list(spec.get("declared_outputs") or [])
+    default_env = dict(spec.get("env") or {})
+    default_cwd = spec.get("cwd") or spec.get("working_dir")
+    default_timeout = spec.get("timeout_seconds")
 
     # Build a simple Operation class dynamically
+    from pydantic import create_model
+
     from autolab.operations.base import Operation, OperationContext
 
     class DynamicOp(Operation):
@@ -1735,12 +1875,41 @@ def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
 
     DynamicOp.capability = capability
     DynamicOp.resource_kind = resource_kind
+    DynamicOp.requires = dict(requires)
     DynamicOp.module = module
     DynamicOp.produces_sample = produces_sample
     DynamicOp.destructive = destructive
     DynamicOp.typical_duration = duration
+    DynamicOp.Inputs = create_model(  # type: ignore[attr-defined]
+        f"{capability.title().replace('_', '')}Inputs",
+        **{name: (Any, None) for name in dict(spec.get("inputs", {}) or {})},
+    )
+    DynamicOp.Outputs = create_model(  # type: ignore[attr-defined]
+        f"{capability.title().replace('_', '')}Outputs",
+        **{name: (Any, None) for name in output_schema},
+    )
 
     async def _run(self: Any, inputs: dict[str, Any], context: OperationContext) -> OperationResult:
+        if adapter in {"shell_command", "command"} or command_template:
+            from autolab.tools.adapters.shell_command import ShellCommand
+
+            command = inputs.get("command") or _render_command_template(
+                str(command_template or ""), inputs
+            )
+            if not command:
+                return OperationResult(
+                    status="failed",
+                    outputs={"reason": "command-backed capability needs `command` or `command_template`"},
+                )
+            shell_inputs = {
+                "command": command,
+                "cwd": inputs.get("cwd") or default_cwd,
+                "env": {**default_env, **dict(inputs.get("env") or {})},
+                "timeout_seconds": inputs.get("timeout_seconds", default_timeout),
+                "declared_outputs": inputs.get("declared_outputs", declared_outputs),
+            }
+            return await ShellCommand().run(shell_inputs, context)
+
         import random
 
         await asyncio.sleep(0.3 + random.random() * 0.4)
@@ -1765,9 +1934,28 @@ def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
     DynamicOp.run = _run
     DynamicOp.__name__ = f"DynamicOp_{capability}"
     DynamicOp.__qualname__ = DynamicOp.__name__
+    DynamicOp.__abstractmethods__ = frozenset()
 
     if not lab.tools.has(capability):
         lab.register_operation(DynamicOp)
+
+
+class _SafeFormatDict(dict[str, Any]):
+    def __missing__(self, key: str) -> str:
+        return "{" + key + "}"
+
+
+def _render_command_template(template: str, inputs: dict[str, Any]) -> str:
+    if not template:
+        return ""
+    values = _SafeFormatDict({k: _format_command_value(v) for k, v in inputs.items()})
+    return template.format_map(values)
+
+
+def _format_command_value(value: Any) -> str:
+    if isinstance(value, (list, tuple)):
+        return " ".join(str(v) for v in value)
+    return str(value)
 
 
 # ---------------------------------------------------------------------------

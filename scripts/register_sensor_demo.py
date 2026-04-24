@@ -192,7 +192,7 @@ def main() -> int:
     print(f"      campaigns      = {[(c.get('name'), c.get('status')) for c in campaigns]}")
 
     missing = []
-    for resource in ("this-pc", "vm-primary"):
+    for resource in ("local-computer", "vm-primary"):
         if resource not in resources:
             missing.append(f"resource {resource}")
     if "sensor_shape_opt" not in workflows:

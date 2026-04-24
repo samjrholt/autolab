@@ -1,5 +1,5 @@
 // Manual capability registration form.
-// Produces a JSON declaration POSTed to /tools/register-yaml.
+// Produces a JSON declaration POSTed to /capabilities/register.
 // Alongside the Claude-assisted "Describe" mode so scientists don't
 // need an API key to register a simple script or instrument routine.
 import { useState } from "react";
@@ -108,7 +108,7 @@ export default function CapabilityForm({ onDone, refresh }) {
       outputs,
     };
     try {
-      await postJson("/tools/register-yaml", body);
+      await postJson("/capabilities/register", body);
       setRegistered(true);
       if (refresh) await refresh();
     } catch (e) {

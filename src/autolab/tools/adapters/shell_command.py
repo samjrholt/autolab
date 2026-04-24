@@ -31,14 +31,13 @@ Outputs:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import json
 import shutil
 from pathlib import Path
 from typing import Any
 
-from autolab.backends import LocalBackend, ResourceBackend
+from autolab.backends import LocalBackend, ResourceBackend, SshExecBackend
 from autolab.backends.base import RemoteWorkdir
 from autolab.models import OperationResult
 from autolab.operations.base import Operation, OperationContext
@@ -69,7 +68,6 @@ class ShellCommand(Operation):
                 outputs={"reason": "shell_command requires `command` (string)"},
             )
 
-        cwd = inputs.get("cwd")
         env = inputs.get("env") or {}
         timeout = inputs.get("timeout_seconds")
         declared = list(inputs.get("declared_outputs") or [])
@@ -89,7 +87,6 @@ class ShellCommand(Operation):
             )
 
             await workdir.write_inputs(inputs)
-            run_cwd = cwd or workdir.remote_path
             result = await workdir.run(command, env=env, timeout_seconds=timeout)
 
             outputs_payload = {
@@ -111,7 +108,7 @@ class ShellCommand(Operation):
                 try:
                     fetched = await workdir.fetch_artefacts()
                     artefacts = {k: str(v) for k, v in fetched.items()}
-                except Exception as exc:  # noqa: BLE001
+                except Exception as exc:
                     outputs_payload["artefact_error"] = str(exc)
 
             if artefacts:
@@ -125,8 +122,30 @@ class ShellCommand(Operation):
     def _pick_backend(self, context: OperationContext | None) -> ResourceBackend:
         if self.backend_override is not None:
             return self.backend_override
-        # Resource side-channel: if the context's resource declares a backend,
-        # wire it up. For now we fall back to LocalBackend for hackathon demos.
+        if context is not None and context.resource is not None:
+            caps = context.resource.capabilities or {}
+            backend = str(caps.get("backend") or "local")
+            connection = dict(caps.get("connection") or {})
+            if backend == "local":
+                root = connection.get("working_dir") or connection.get("root") or ".autolab-work"
+                return LocalBackend(root=Path(str(root)).expanduser())
+            if backend in {"ssh_exec", "slurm"}:
+                host = connection.get("host") or caps.get("ssh_host") or caps.get("host")
+                if not host:
+                    raise ValueError(
+                        f"Resource {context.resource.name!r} uses {backend!r} but has no SSH host"
+                    )
+                return SshExecBackend(
+                    host=str(host),
+                    user=connection.get("user"),
+                    port=connection.get("port"),
+                    remote_root=str(connection.get("remote_root") or "~/.autolab-work"),
+                )
+            if backend in {"websocket", "mcp", "custom"}:
+                raise NotImplementedError(
+                    f"Resource backend {backend!r} is registered but this capability is command-backed. "
+                    "Register a capability adapter for that backend, or use local/ssh_exec/slurm."
+                )
         return LocalBackend()
 
 

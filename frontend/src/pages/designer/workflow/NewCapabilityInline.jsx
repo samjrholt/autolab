@@ -32,7 +32,7 @@ export default function NewCapabilityInline({ open, onClose, onRegistered, claud
     setProposal(null);
     setNotes("");
     try {
-      const r = await postJson("/tools/design", { text: input });
+      const r = await postJson("/capabilities/design", { text: input });
       setProposal(r.tool);
       setNotes(r.notes || "");
       if (!r.tool) setError("Claude returned no concrete capability proposal — try a more specific description.");
@@ -48,7 +48,7 @@ export default function NewCapabilityInline({ open, onClose, onRegistered, claud
     setBusy(true);
     setError("");
     try {
-      const registered = await postJson("/tools/register-yaml", proposal);
+      const registered = await postJson("/capabilities/register", proposal);
       reset();
       onRegistered(registered);
     } catch (e) {

@@ -50,7 +50,7 @@ export default function App() {
 
   const campaigns = status?.campaigns || [];
   const resources = status?.resources || [];
-  const tools = status?.tools || [];
+  const capabilities = status?.capabilities || status?.tools || [];
   const workflows = status?.workflows || [];
   const escalationCount = status?.escalations?.length || 0;
 
@@ -74,9 +74,9 @@ export default function App() {
   const selectedCapability = useMemo(
     () =>
       route.page === "capability"
-        ? tools.find((t) => (t.capability || t.name) === route.name)
+        ? capabilities.find((t) => (t.capability || t.name) === route.name)
         : null,
-    [route, tools],
+    [route, capabilities],
   );
 
   const crumbs = useMemo(() => {
@@ -146,7 +146,7 @@ export default function App() {
     if (route.page === "capabilities") {
       return (
         <CapabilitiesPage
-          tools={tools}
+          tools={capabilities}
           onRegister={() => navigate({ page: "designer", kind: "capability" })}
           onSelectCapability={(t) =>
             navigate({ page: "capability", name: t.capability || t.name })

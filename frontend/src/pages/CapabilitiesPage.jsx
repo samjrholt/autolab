@@ -8,7 +8,7 @@ export default function CapabilitiesPage({ tools, onRegister, onSelectCapability
     <>
       <PageHeader
         title="Capabilities"
-        description="What this lab can do. Each capability is a scientist-shaped noun (`sintering`, `micromagnetics_hysteresis`, `shell_command`) backed by a declaration and an adapter."
+        description="What this lab can do. Each capability is a scientist-shaped action (`sintering`, `micromagnetics_hysteresis`, `shell_command`) backed by a declaration and an adapter."
         primaryAction={
           <button type="button" onClick={onRegister} className="btn-primary">
             + Add capability

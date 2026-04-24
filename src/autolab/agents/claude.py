@@ -256,9 +256,6 @@ def _offline_response(system: str, user: str) -> str:
         tools = _offline_extract_tool_catalogue(user)
         chosen_tool = _offline_select_tool(goal_text, tools)
         objective_key = _offline_select_objective(goal_text_raw, goal_text, chosen_tool, tools)
-        mentions_direction = any(
-            phrase in goal_text for phrase in ("maximise", "maximize", "minimise", "minimize", "optimise", "optimize")
-        )
         has_input_guidance = _offline_has_input_guidance(goal_text, chosen_tool)
         questions: list[str] = []
         if chosen_tool is None:
@@ -302,9 +299,37 @@ def _offline_response(system: str, user: str) -> str:
                 "notes": "Anthropic API key not configured; returning a generic offline draft.",
             }
         )
-    if "lab setup" in lowered or "lab_setup_designer" in lowered or "scientist description" in lowered:
+    if "lab setup" in lowered or "lab_setup_designer" in lowered:
         scientist_text = lowered.split("scientist description (verbatim):", 1)[-1]
         scientist_text = scientist_text.split("already registered", 1)[0]
+        if "slurm" in scientist_text or "login node" in scientist_text:
+            return json.dumps(
+                {
+                    "resources": [
+                        {
+                            "name": "slurm-login",
+                            "kind": "computer",
+                            "backend": "slurm",
+                            "connection": {},
+                            "tags": {"scheduler": "slurm", "role": "login_node"},
+                            "capabilities": {"scheduler": "slurm", "role": "login_node"},
+                            "description": "Slurm login/submit host. Connection details are still needed before autolab can run anything.",
+                        }
+                    ],
+                    "operations": [],
+                    "workflow": None,
+                    "questions": [
+                        "What SSH alias or hostname should autolab use for the login node?",
+                        "What remote working directory may autolab create job folders in?",
+                        "How should Python be activated on the server (module load, conda, pixi, venv, or system python)?",
+                        "What Slurm partition/account/time limit and CPU/GPU/memory request should jobs use?",
+                        "Where is the script or repo to run, and what command should launch it?",
+                        "What outputs should autolab collect, and what smoke-test command proves the setup works?",
+                    ],
+                    "ready_to_apply": False,
+                    "notes": "A Slurm login node is only a Resource. I still need the connection and invocation details before proposing runnable capabilities.",
+                }
+            )
         vague_setup = (
             "set up a lab" in scientist_text
             or "setup a lab" in scientist_text
@@ -322,6 +347,9 @@ def _offline_response(system: str, user: str) -> str:
                 "simulation",
                 "simulator",
                 "equipment",
+                "server",
+                "slurm",
+                "websocket",
             )
         )
         if vague_setup:
@@ -345,7 +373,10 @@ def _offline_response(system: str, user: str) -> str:
                     {
                         "name": "local-workstation",
                         "kind": "computer",
-                        "capabilities": {"backend": "local"},
+                        "backend": "local",
+                        "connection": {"working_dir": ".autolab-work"},
+                        "tags": {"role": "workstation"},
+                        "capabilities": {"backend": "local", "connection": {"working_dir": ".autolab-work"}},
                         "description": "Local workstation for running scripts and simulations.",
                         "typical_operation_durations": {"run_simulation": 5},
                     },
@@ -375,12 +406,35 @@ def _offline_response(system: str, user: str) -> str:
             }
         )
     if "resource designer" in lowered or "resource_designer" in lowered:
+        scientist_text = lowered.split("scientist description (verbatim):", 1)[-1]
+        if "slurm" in scientist_text or "login node" in scientist_text:
+            return json.dumps(
+                {
+                    "name": "slurm-login",
+                    "kind": "computer",
+                    "backend": "slurm",
+                    "connection": {},
+                    "tags": {"scheduler": "slurm", "role": "login_node"},
+                    "capabilities": {"scheduler": "slurm", "role": "login_node"},
+                    "description": "Slurm login/submit host. Connection details are required before it can run capabilities.",
+                    "questions": [
+                        "What SSH alias or hostname should autolab use?",
+                        "What remote working directory may autolab use?",
+                        "What Slurm partition/account/time/resources should jobs request?",
+                        "What smoke-test command should prove the login node works?",
+                    ],
+                    "ready_to_apply": False,
+                    "notes": "This is not ready to register as runnable until the connection and smoke-test details are known.",
+                }
+            )
         return json.dumps(
             {
                 "name": "resource-1",
                 "kind": "computer",
                 "capabilities": {},
                 "description": "[offline] scripted resource stub",
+                "questions": [],
+                "ready_to_apply": True,
                 "notes": "Offline fallback — set ANTHROPIC_API_KEY for a real proposal.",
             }
         )
@@ -396,6 +450,8 @@ def _offline_response(system: str, user: str) -> str:
                 "produces_sample": False,
                 "destructive": False,
                 "typical_duration_s": 5,
+                "questions": [],
+                "ready_to_apply": True,
                 "notes": "Offline fallback — set ANTHROPIC_API_KEY for a real proposal.",
             }
         )
@@ -485,9 +541,11 @@ def _offline_select_objective(
     )
     if generic_match:
         return generic_match.group(1)
-    if chosen_tool is not None and len(chosen_tool["outputs"]) == 1:
-        if any(word in goal_text for word in ("maximise", "maximize", "minimise", "minimize", "optimise", "optimize")):
-            return chosen_tool["outputs"][0]
+    if chosen_tool is not None and len(chosen_tool["outputs"]) == 1 and any(
+        word in goal_text
+        for word in ("maximise", "maximize", "minimise", "minimize", "optimise", "optimize")
+    ):
+        return chosen_tool["outputs"][0]
     return None
 
 
@@ -1096,6 +1154,9 @@ Reply with a single compact JSON object:
       {
         "name": "tube-furnace-A",
         "kind": "furnace",
+        "backend": "local|ssh_exec|slurm|websocket|mcp|custom",
+        "connection": {"host": "ssh-alias-or-host", "remote_root": "~/.autolab-work"},
+        "tags": {"max_temp_k": 1400},
         "capabilities": {"max_temp_k": 1400, "atmosphere": ["Ar", "N2"]},
         "description": "Tube furnace in bay 1"
       }
@@ -1134,6 +1195,17 @@ Rules:
   the scientist's description.
 - Required setup information is: concrete resources, the first operation(s) to
   run, and the outputs those operations produce.
+- Resources describe where/how work happens. Use backend + connection + tags:
+  local, ssh_exec, slurm (SSH submit host), websocket, mcp, or custom.
+- For a server, Slurm partition, WebSocket instrument, MCP endpoint, or vendor
+  API, do not mark ready_to_apply true until the connection, invocation shape,
+  outputs, and a smoke-test are known.
+- A Slurm login node alone is not a runnable capability. Ask for SSH alias/host,
+  remote workdir, Python/environment activation, sbatch/srun details, script or
+  repo path, expected outputs, and a smoke-test command.
+- A WebSocket instrument alone is not a runnable capability. Ask for URL,
+  protocol/messages, auth source if any, command to send, response schema,
+  output mapping, and a smoke-test message.
 - Resource names should be specific instances (tube-furnace-A, squid-1, xrd-1).
 - Resource kinds should be generic categories (furnace, magnetometer, diffractometer, balance, ball_mill, computer).
 - Each operation should map to exactly one real lab step a scientist would recognise.
@@ -1283,8 +1355,13 @@ Reply with a single compact JSON object:
   {
     "name": "tube-furnace-A",
     "kind": "furnace",
+    "backend": "local|ssh_exec|slurm|websocket|mcp|custom",
+    "connection": {"host": "ssh alias, websocket URL, or endpoint"},
+    "tags": {"max_temp_k": 1400},
     "capabilities": {"max_temp_k": 1400, "atmosphere": "Ar"},
     "description": "Tube furnace in bay 1",
+    "questions": [],
+    "ready_to_apply": true,
     "notes": "Short rationale"
   }
 
@@ -1293,6 +1370,10 @@ Rules:
 - kind = generic category (furnace, tube_furnace, arc_furnace, magnetometer,
   xrd, balance, slurm_partition, computer, vm, gpu_node, custom).
 - capabilities = structured dict of numeric/string fields relevant to the kind.
+- backend + connection describe how autolab reaches it. For WebSocket equipment,
+  include the URL/protocol details in connection once known.
+- If connection or smoke-test details are missing for a remote/server/instrument,
+  add questions and set ready_to_apply false.
 - Emit ONLY the JSON; no prose.
 """
 
@@ -1303,6 +1384,8 @@ class ResourceProposal:
 
     resource: dict[str, Any]
     notes: str
+    questions: list[str]
+    ready_to_apply: bool
     raw: ClaudeResponse
 
 
@@ -1333,7 +1416,15 @@ class ResourceDesigner:
             _persist_claim(self._lab, "designer:resource", "resource_designer", user, resp, loose=True)
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
-        return ResourceProposal(resource=dict(data), notes=notes, raw=resp)
+        questions = [str(q) for q in data.pop("questions", []) or []]
+        ready_to_apply = bool(data.pop("ready_to_apply", not questions))
+        return ResourceProposal(
+            resource=dict(data),
+            notes=notes,
+            questions=questions,
+            ready_to_apply=ready_to_apply,
+            raw=resp,
+        )
 
     async def adesign(
         self,
@@ -1350,7 +1441,15 @@ class ResourceDesigner:
             _persist_claim(self._lab, "designer:resource", "resource_designer", user, resp, loose=True)
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
-        return ResourceProposal(resource=dict(data), notes=notes, raw=resp)
+        questions = [str(q) for q in data.pop("questions", []) or []]
+        ready_to_apply = bool(data.pop("ready_to_apply", not questions))
+        return ResourceProposal(
+            resource=dict(data),
+            notes=notes,
+            questions=questions,
+            ready_to_apply=ready_to_apply,
+            raw=resp,
+        )
 
 
 def _describe_resource_context(text: str, lab: Lab | None) -> str:
@@ -1370,8 +1469,8 @@ def _describe_resource_context(text: str, lab: Lab | None) -> str:
     return "\n".join(lines)
 
 
-_TOOL_SYSTEM = """You are the Tool Designer for an autonomous science lab framework
-called autolab. A scientist is describing ONE capability (tool) they want to
+_TOOL_SYSTEM = """You are the Capability Designer for an autonomous science lab framework
+called autolab. A scientist is describing ONE capability they want to
 register. Propose a single YAML-equivalent JSON declaration.
 
 Reply with a single compact JSON object:
@@ -1379,6 +1478,7 @@ Reply with a single compact JSON object:
   {
     "capability": "sintering",
     "resource_kind": "furnace",
+    "adapter": "dynamic|shell_command|custom",
     "module": "sintering.stub.v1",
     "description": "Sinter a pellet at a target temperature and time",
     "inputs":  {"composition": "dict", "temperature_k": "float", "time_h": "float"},
@@ -1392,8 +1492,13 @@ Reply with a single compact JSON object:
 
 Rules:
 - capability = scientist-friendly verb (sintering, magnetometry, xrd, hysteresis_interpret).
-- resource_kind = the generic resource category this tool binds to.
+- resource_kind = the generic resource category this capability binds to.
 - inputs/outputs = map of name -> coarse type string (float, int, bool, list, dict, str).
+- If the user describes an executable command, set adapter to shell_command and
+  include command_template, timeout_seconds, and declared_outputs when known.
+- If required invocation details are missing, return a partial proposal in notes
+  and ask for the missing details in the surrounding lab setup flow rather than
+  pretending a mock is runnable.
 - Emit ONLY the JSON; no prose.
 """
 
@@ -1404,6 +1509,8 @@ class ToolProposal:
 
     tool: dict[str, Any]
     notes: str
+    questions: list[str]
+    ready_to_apply: bool
     raw: ClaudeResponse
 
 
@@ -1434,7 +1541,15 @@ class ToolDesigner:
             _persist_claim(self._lab, "designer:tool", "tool_designer", user, resp, loose=True)
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
-        return ToolProposal(tool=dict(data), notes=notes, raw=resp)
+        questions = [str(q) for q in data.pop("questions", []) or []]
+        ready_to_apply = bool(data.pop("ready_to_apply", not questions))
+        return ToolProposal(
+            tool=dict(data),
+            notes=notes,
+            questions=questions,
+            ready_to_apply=ready_to_apply,
+            raw=resp,
+        )
 
     async def adesign(
         self,
@@ -1451,7 +1566,15 @@ class ToolDesigner:
             _persist_claim(self._lab, "designer:tool", "tool_designer", user, resp, loose=True)
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
-        return ToolProposal(tool=dict(data), notes=notes, raw=resp)
+        questions = [str(q) for q in data.pop("questions", []) or []]
+        ready_to_apply = bool(data.pop("ready_to_apply", not questions))
+        return ToolProposal(
+            tool=dict(data),
+            notes=notes,
+            questions=questions,
+            ready_to_apply=ready_to_apply,
+            raw=resp,
+        )
 
 
 def _describe_tool_context(text: str, lab: Lab | None) -> str:

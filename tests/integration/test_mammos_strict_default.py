@@ -126,7 +126,7 @@ async def test_opt_in_surrogate_env_restores_fallback(tmp_path, monkeypatch):
 
 def test_server_default_boot_is_empty(tmp_path, monkeypatch):
     """Fresh boot with no env override is an empty Lab — the only default is
-    the ``this-pc`` auto-registered resource. Demo content is out-of-band."""
+    the ``local-computer`` auto-registered resource. Demo content is out-of-band."""
     monkeypatch.setenv("AUTOLAB_ROOT", str(tmp_path / "lab"))
     monkeypatch.delenv("AUTOLAB_BOOTSTRAP", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -139,7 +139,7 @@ def test_server_default_boot_is_empty(tmp_path, monkeypatch):
     workflows = {w["name"] for w in body["workflows"]}
     tools = {t["capability"] for t in body["tools"]}
 
-    assert resources == {"this-pc"}, f"unexpected default resources: {resources}"
+    assert resources == {"local-computer"}, f"unexpected default resources: {resources}"
     assert workflows == set(), f"unexpected default workflows: {workflows}"
     assert tools == set(), f"unexpected default tools: {tools}"
     assert body["planners_available"] == ["optuna", "claude"]
@@ -162,7 +162,7 @@ def test_mammos_bootstrap_apply_registers_sensor_workflow(tmp_path, monkeypatch)
     resources = {r["name"] for r in body["resources"]}
     workflows = {w["name"] for w in body["workflows"]}
     tools = {t["capability"] for t in body["tools"]}
-    assert "this-pc" in resources
+    assert "local-computer" in resources
     assert "vm-primary" in resources
     assert "sensor_shape_opt" in workflows
     assert MAMMOS_SENSOR_WORKFLOW.name in workflows

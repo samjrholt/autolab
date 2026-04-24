@@ -11,7 +11,7 @@ import CapabilityForm from "./designer/CapabilityForm";
  *
  * Kinds: "workflow" | "resource" | "capability". Each kind hits its
  * existing server endpoint — /workflows/design, /resources/design,
- * /tools/design — and then a POST to register the approved proposal.
+ * /capabilities/design — and then a POST to register the approved proposal.
  *
  * Workflows additionally support a "Build" mode backed by a React Flow
  * canvas: drag capabilities, connect data edges, edit step props.
@@ -46,10 +46,10 @@ const KINDS = {
     label: "Capability",
     title: "Add capability",
     description:
-      "What the lab can do — a script, an instrument routine, an MCP tool. Register manually for simple cases (no API key needed), or let Claude draft from a description.",
+      "What the lab can do - a script, instrument routine, WebSocket command, MCP endpoint, or simulation. Claude drafts this by default; manual registration is still available.",
     placeholder: "A Python script at ~/code/my-sim I run with pixi run simulate that takes a config.yaml and writes results/loop.png…",
-    designEndpoint: "/tools/design",
-    applyEndpoint: "/tools/register-yaml",
+    designEndpoint: "/capabilities/design",
+    applyEndpoint: "/capabilities/register",
     extractProposal: (r) => r.tool,
     buildApplyBody: (t) => t,
     supportsForm: true,
@@ -94,6 +94,8 @@ function DescribeMode({ config, status, refresh, registered, setRegistered }) {
   const [busy, setBusy] = useState(false);
   const [proposal, setProposal] = useState(null);
   const [notes, setNotes] = useState("");
+  const [questions, setQuestions] = useState([]);
+  const [readyToApply, setReadyToApply] = useState(true);
   const [error, setError] = useState("");
   const keyMissing = status && !status.claude_configured;
 
@@ -103,12 +105,16 @@ function DescribeMode({ config, status, refresh, registered, setRegistered }) {
     setError("");
     setProposal(null);
     setNotes("");
+    setQuestions([]);
+    setReadyToApply(true);
     setRegistered(false);
     try {
       const result = await postJson(config.designEndpoint, { text: input });
       const p = config.extractProposal(result);
       setProposal(p);
       setNotes(result.notes || "");
+      setQuestions(result.questions || []);
+      setReadyToApply(result.ready_to_apply !== false);
       if (!p) setError("Claude returned no concrete proposal — try a more specific description.");
     } catch (err) {
       setError(String(err));
@@ -181,7 +187,7 @@ function DescribeMode({ config, status, refresh, registered, setRegistered }) {
           {busy && !proposal ? "Drafting…" : "Draft with Claude"}
         </button>
         {proposal && !registered ? (
-          <button type="button" onClick={apply} disabled={busy} className="btn-secondary">
+          <button type="button" onClick={apply} disabled={busy || !readyToApply} className="btn-secondary">
             {busy ? "Registering…" : `Register ${config.label}`}
           </button>
         ) : null}
@@ -223,6 +229,24 @@ function DescribeMode({ config, status, refresh, registered, setRegistered }) {
         </div>
       ) : null}
 
+      {questions.length ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: "rgba(232,176,98,0.08)",
+            border: "1px solid rgba(232,176,98,0.28)",
+            borderRadius: 5,
+            fontSize: 12,
+            color: "var(--color-secondary)",
+          }}
+        >
+          {questions.map((question) => (
+            <div key={question} style={{ marginBottom: 4 }}>{question}</div>
+          ))}
+        </div>
+      ) : null}
+
       <ProposalView proposal={proposal} kind={config.label} />
     </div>
   );
@@ -234,7 +258,7 @@ function BuildMode({ status, refresh, onDone, initial }) {
   const [inlineOpen, setInlineOpen] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(true);
 
-  const tools = status?.tools || [];
+  const tools = status?.capabilities || status?.tools || [];
 
   const save = async (body) => {
     setSaving(true);
@@ -293,10 +317,10 @@ export default function DesignerPage({ kind, status, refresh, onDone, initial })
   if (!config) return null;
 
   // Workflows: default to Build when caps or initial exist.
-  // Resources/Capabilities: default to "form" (no API key needed).
-  const hasTools = (status?.tools || []).length > 0;
+  // Resources/Capabilities: default to Claude when configured, manual otherwise.
+  const hasTools = (status?.capabilities || status?.tools || []).length > 0;
   const defaultMode = config.supportsCanvas && (initial || hasTools) ? "build"
-    : config.supportsForm ? "form"
+    : config.supportsForm ? (status?.claude_configured ? "describe" : "form")
     : "describe";
   const [mode, setMode] = useState(defaultMode);
   const [registered, setRegistered] = useState(false);

@@ -6,6 +6,7 @@ stack — Lab, Scheduler, EventBus — is exercised.
 
 from __future__ import annotations
 
+import sys
 import time
 
 import pytest
@@ -31,6 +32,8 @@ def test_status_and_bootstrap(client):
     assert body["lab_id"].startswith("lab-")
     # Bootstrap demo registers exactly one resource + tool.
     assert any(t["name"] == "demo_quadratic" for t in body["tools"])
+    assert any(c["name"] == "demo_quadratic" for c in body["capabilities"])
+    assert any(r["name"] == "local-computer" for r in body["resources"])
     assert any(r["name"] == "pc-1" for r in body["resources"])
 
 
@@ -52,6 +55,51 @@ def test_add_resource_roundtrip(client):
     assert r.status_code == 200
     r = client.get("/resources")
     assert "cluster-gpu" not in [row["name"] for row in r.json()]
+
+
+def test_resource_registration_accepts_backend_connection_shape(client):
+    r = client.post(
+        "/resources",
+        json={
+            "name": "login-submit",
+            "backend": "slurm",
+            "connection": {
+                "host": "cluster-login",
+                "remote_root": "~/.autolab-work",
+            },
+            "tags": {"scheduler": "slurm", "role": "login_node"},
+            "description": "Generic Slurm submit host",
+        },
+    )
+    assert r.status_code == 200
+    rows = client.get("/resources").json()
+    row = next(item for item in rows if item["name"] == "login-submit")
+    assert row["kind"] == "computer"
+    assert row["backend"] == "slurm"
+    assert row["connection"]["host"] == "cluster-login"
+    assert row["tags"]["scheduler"] == "slurm"
+
+
+def test_capability_registration_preserves_resource_kind_and_aliases(client):
+    r = client.post(
+        "/capabilities/register",
+        json={
+            "capability": "run_python_script",
+            "resource_kind": "computer",
+            "resource_requirements": {"backend": "local"},
+            "adapter": "dynamic",
+            "module": "run_python_script.stub.v1",
+            "inputs": {"script": "str"},
+            "outputs": {"stdout": "str"},
+            "typical_duration_s": 10,
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["capability"] == "run_python_script"
+    assert body["resource_kind"] == "computer"
+    assert body["requires"] == {"backend": "local"}
+    assert body["typical_duration_s"] == 10
 
 
 def test_campaign_submit_runs_and_completes(client):
@@ -246,6 +294,32 @@ def test_lab_setup_asks_questions_before_proposal(client):
     assert body["operations"] == []
 
 
+def test_lab_setup_slurm_login_node_asks_connection_and_smoke_test_questions(client):
+    r = client.post("/lab/setup", json={"text": "A server login node with Slurm"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["offline"] is True
+    assert body["ready_to_apply"] is False
+    questions = " ".join(body["questions"]).lower()
+    assert "ssh" in questions
+    assert "working directory" in questions
+    assert "python" in questions
+    assert "partition" in questions
+    assert "smoke-test" in questions
+
+
+def test_resource_designer_slurm_login_node_is_not_ready_to_apply(client):
+    r = client.post("/resources/design", json={"text": "A server login node with Slurm"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["offline"] is True
+    assert body["ready_to_apply"] is False
+    assert body["resource"]["backend"] == "slurm"
+    questions = " ".join(body["questions"]).lower()
+    assert "ssh" in questions
+    assert "smoke-test" in questions
+
+
 def test_lab_setup_apply_registers_resources_tools_and_workflow(client):
     draft = client.post(
         "/lab/setup",
@@ -275,6 +349,41 @@ def test_lab_setup_apply_registers_resources_tools_and_workflow(client):
     assert any(r["name"] == "local-workstation" for r in status["resources"])
     assert any(t["capability"] == "run_simulation" for t in status["tools"])
     assert any(w["name"] == "simulation-workflow" for w in status["workflows"])
+
+
+def test_command_backed_capability_smoke_test_creates_real_record(client):
+    resource = client.post(
+        "/resources",
+        json={
+            "name": "local-runner",
+            "kind": "local_runner",
+            "backend": "local",
+            "connection": {"working_dir": ".autolab-work/test-local-runner"},
+        },
+    )
+    assert resource.status_code == 200
+    capability = client.post(
+        "/capabilities/register",
+        json={
+            "capability": "say_hello",
+            "resource_kind": "local_runner",
+            "adapter": "shell_command",
+            "module": "say_hello.command.v1",
+            "command_template": f"{sys.executable} -c \"print('smoke-ok')\"",
+            "outputs": {"stdout": "str", "stderr": "str", "exit_code": "int"},
+            "typical_duration_s": 1,
+        },
+    )
+    assert capability.status_code == 200
+
+    r = client.post("/capabilities/say_hello/smoke-test", json={"inputs": {}})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert body["record"]["record_status"] == "completed"
+    assert body["record"]["resource_name"] == "local-runner"
+    assert body["outputs"]["exit_code"] == 0
+    assert "smoke-ok" in body["outputs"]["stdout"]
 
 
 def test_analysis_query_offline(client):

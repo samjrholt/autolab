@@ -31,7 +31,7 @@ This runs `uvicorn autolab.server.app:app --reload --port 8000`. On boot
 the server:
 
 - creates (or re-opens) the Ledger directory under `./.autolab-runs/default/`,
-- pre-registers only the host Resource (`this-pc`) unless a bootstrap is
+- pre-registers only the host Resource (`local-computer`) unless a bootstrap is
   requested,
 - launches the `CampaignScheduler` as a background task,
 - starts a single WebSocket fan-out for live events.

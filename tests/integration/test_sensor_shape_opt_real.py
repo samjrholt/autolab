@@ -1,8 +1,7 @@
 """Real-backend smoke test for the sensor shape-opt demo workflow.
 
 Skipped unless:
-- the WSL pixi env at ``/home/sam/autolab-mammos`` exists (or another path
-  is pointed to via ``AUTOLAB_VM_PIXI_PROJECT``), AND
+- ``AUTOLAB_VM_PIXI_PROJECT`` points at a real MaMMoS pixi environment, AND
 - ``AUTOLAB_SMOKE_REAL_MAMMOS=1`` is set.
 
 The test posts a single one-off workflow run and asserts that both
@@ -12,7 +11,6 @@ steps completed against real backends (``mammos_spindynamics`` and
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -29,7 +27,7 @@ def _wsl_env_available() -> bool:
         return False
     # The server's bootstrap probe handles unreachable WSL gracefully; we just
     # want this test to stay opt-in so it doesn't run on CI.
-    return True
+    return bool(os.environ.get("AUTOLAB_VM_PIXI_PROJECT"))
 
 
 pytestmark = pytest.mark.skipif(
@@ -42,12 +40,11 @@ pytestmark = pytest.mark.skipif(
 def http_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOLAB_ROOT", str(tmp_path / "lab"))
     monkeypatch.setenv("AUTOLAB_BOOTSTRAP", "mammos")
-    if not os.environ.get("AUTOLAB_VM_PIXI_PROJECT"):
-        monkeypatch.setenv("AUTOLAB_VM_PIXI_PROJECT", "/home/sam/autolab-mammos")
     # Strict mode — no surrogate fallback allowed.
     monkeypatch.delenv("AUTOLAB_MAMMOS_ALLOW_SURROGATE", raising=False)
     monkeypatch.delenv("AUTOLAB_MAMMOS_FORCE_SURROGATE", raising=False)
     from fastapi.testclient import TestClient
+
     from autolab.server.app import app
 
     with TestClient(app) as client:
@@ -85,7 +82,7 @@ def test_sensor_shape_opt_runs_real_ubermag(http_client):
     assert fom_rec["outputs"]["backend"] == "ubermag"
 
     # Physical sanity: Permalloy Ms(300K) ≈ 830 kA/m.
-    Ms = mat_rec["outputs"]["Ms_A_per_m"]
-    assert 750_000 <= Ms <= 900_000, f"Ms(Permalloy, 300K) out of range: {Ms}"
-    Hmax = fom_rec["outputs"]["Hmax_A_per_m"]
-    assert Hmax > 0, f"Hmax must be positive: {Hmax}"
+    ms = mat_rec["outputs"]["Ms_A_per_m"]
+    assert 750_000 <= ms <= 900_000, f"Ms(Permalloy, 300K) out of range: {ms}"
+    hmax = fom_rec["outputs"]["Hmax_A_per_m"]
+    assert hmax > 0, f"Hmax must be positive: {hmax}"
