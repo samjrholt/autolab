@@ -33,12 +33,14 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import base64
 import hashlib
 import json
 import os
 import re
 from contextlib import suppress
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from autolab.models import (
@@ -56,7 +58,9 @@ from autolab.planners.base import DecisionContext, PlanContext, Planner, PolicyP
 if TYPE_CHECKING:
     from autolab.lab import Lab
 
-CLAUDE_MODEL_DEFAULT = "claude-opus-4-7"
+# claude-opus-4-7 has a 1M-token context window by default (confirmed Anthropic docs 2026-04).
+# Override via AUTOLAB_CLAUDE_MODEL env var to switch models without editing code.
+CLAUDE_MODEL_DEFAULT: str = os.environ.get("AUTOLAB_CLAUDE_MODEL", "claude-opus-4-7")
 _TOOL_LINE_RE = re.compile(
     r"^\s*-\s*(?P<capability>.+?)\s+\(module [^)]+\)\s+resource=(?P<resource>\S+)\s+"
     r"inputs=(?P<inputs>\[[^\]]*\])\s+outputs=(?P<outputs>\[[^\]]*\])\s*$"
@@ -101,13 +105,17 @@ class ClaudeResponse:
     model: str
     prompt_hash: str
     offline: bool
+    context_tokens: int | None = None
 
 
-def _hash_prompt(system: str, user: str) -> str:
+def _hash_prompt(system: str, user: str, images: list[bytes] | None = None) -> str:
     h = hashlib.sha256()
     h.update(system.encode("utf-8"))
     h.update(b"\x00")
     h.update(user.encode("utf-8"))
+    for img in images or []:
+        h.update(b"\x01")
+        h.update(img[:512])  # hash first 512 bytes per image
     return h.hexdigest()
 
 
@@ -120,7 +128,7 @@ class ClaudeTransport:
         model: str = CLAUDE_MODEL_DEFAULT,
         api_key: str | None = None,
         offline: bool | None = None,
-        max_tokens: int = 1024,
+        max_tokens: int = 4096,
     ) -> None:
         self.model = model
         self.max_tokens = max_tokens
@@ -132,63 +140,101 @@ class ClaudeTransport:
         self._api_key = key
         self._client: Any | None = None
 
-    def call(self, system: str, user: str) -> ClaudeResponse:
+    def call(
+        self,
+        system: str,
+        user: str,
+        *,
+        images: list[bytes] | None = None,
+    ) -> ClaudeResponse:
         if self.offline:
             return ClaudeResponse(
                 text=_offline_response(system, user),
                 model=f"{self.model}/offline",
-                prompt_hash=_hash_prompt(system, user),
+                prompt_hash=_hash_prompt(system, user, images),
                 offline=True,
             )
         if self._client is None:
             import anthropic  # local import — optional dep at runtime
 
             self._client = anthropic.Anthropic(api_key=self._api_key)
+        content = _build_user_content(user, images)
         resp = self._client.messages.create(
             model=self.model,
             max_tokens=self.max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": content}],
         )
         text_parts = [
             b.text for b in resp.content if getattr(b, "type", "text") == "text"
         ]
+        ctx_tokens = getattr(getattr(resp, "usage", None), "input_tokens", None)
         return ClaudeResponse(
             text="".join(text_parts),
             model=self.model,
-            prompt_hash=_hash_prompt(system, user),
+            prompt_hash=_hash_prompt(system, user, images),
             offline=False,
+            context_tokens=ctx_tokens,
         )
 
-    async def acall(self, system: str, user: str) -> ClaudeResponse:
+    async def acall(
+        self,
+        system: str,
+        user: str,
+        *,
+        images: list[bytes] | None = None,
+    ) -> ClaudeResponse:
         """Async version of call() — runs the Anthropic SDK in a thread pool."""
         if self.offline:
             return ClaudeResponse(
                 text=_offline_response(system, user),
                 model=f"{self.model}/offline",
-                prompt_hash=_hash_prompt(system, user),
+                prompt_hash=_hash_prompt(system, user, images),
                 offline=True,
             )
         if self._client is None:
             import anthropic
 
             self._client = anthropic.Anthropic(api_key=self._api_key)
+        content = _build_user_content(user, images)
         resp = await asyncio.to_thread(
             self._client.messages.create,
             model=self.model,
             max_tokens=self.max_tokens,
             system=system,
-            messages=[{"role": "user", "content": user}],
+            messages=[{"role": "user", "content": content}],
         )
         text_parts = [
             b.text for b in resp.content if getattr(b, "type", "text") == "text"
         ]
+        ctx_tokens = getattr(getattr(resp, "usage", None), "input_tokens", None)
         return ClaudeResponse(
             text="".join(text_parts),
             model=self.model,
-            prompt_hash=_hash_prompt(system, user),
+            prompt_hash=_hash_prompt(system, user, images),
             offline=False,
+            context_tokens=ctx_tokens,
         )
+
+
+def _build_user_content(
+    text: str, images: list[bytes] | None
+) -> str | list[dict[str, Any]]:
+    """Build the user message content. Returns a plain string if no images."""
+    if not images:
+        return text
+    content: list[dict[str, Any]] = []
+    for img_bytes in images:
+        content.append({
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": base64.b64encode(img_bytes).decode("ascii"),
+            },
+        })
+    content.append({"type": "text", "text": text})
+    return content
 
 
 def _offline_response(system: str, user: str) -> str:
@@ -558,6 +604,128 @@ def _offline_has_input_guidance(goal_text: str, chosen_tool: dict[str, Any] | No
 
 
 # ---------------------------------------------------------------------------
+# Ledger-context helpers (Tasks 2 & 3)
+# ---------------------------------------------------------------------------
+
+_MAX_ARRAY_DISPLAY = 50
+_MAX_CONTEXT_IMAGES = 5
+
+
+def _truncate_value(v: Any, max_array: int = _MAX_ARRAY_DISPLAY) -> Any:
+    """Truncate lists > max_array to [first5…last5] (N total)."""
+    if isinstance(v, list) and len(v) > max_array:
+        head = v[:5]
+        tail = v[-5:]
+        return head + [f"... ({len(v)} total) ..."] + tail
+    if isinstance(v, dict):
+        return {k: _truncate_value(val, max_array) for k, val in v.items()}
+    return v
+
+
+def _record_short_hash(record: Any) -> str:
+    """First 6 hex chars of the record checksum, prefixed 0x."""
+    cs = getattr(record, "checksum", None) or ""
+    return f"0x{cs[:6]}" if cs else "0x??????"
+
+
+def _serialise_record(record: Any) -> str:
+    """Compact single-record text block (≤ ~1 KB)."""
+    short_hash = _record_short_hash(record)
+    ts = ""
+    created = getattr(record, "created_at", None)
+    if created is not None:
+        ts = getattr(created, "isoformat", lambda: str(created))()[:19]
+
+    inputs_trunc = _truncate_value(getattr(record, "inputs", {}) or {})
+    outputs_trunc = {
+        k: ("<png path>" if str(k).endswith("_png") or str(k).endswith("_image") else v)
+        for k, v in (_truncate_value(getattr(record, "outputs", {}) or {})).items()
+    }
+
+    parts = [
+        f"[Record {short_hash}]",
+        f"  operation : {getattr(record, 'operation', '?')}",
+        f"  status    : {getattr(record, 'record_status', '?')}",
+        f"  timestamp : {ts}",
+        f"  inputs    : {json.dumps(inputs_trunc, default=str)[:400]}",
+        f"  outputs   : {json.dumps(outputs_trunc, default=str)[:400]}",
+    ]
+    fm = getattr(record, "failure_mode", None)
+    if fm:
+        parts.append(f"  failure   : {fm}")
+    dec = getattr(record, "decision", None)
+    if dec:
+        parts.append(f"  decision  : {json.dumps(dec, default=str)[:200]}")
+    return "\n".join(parts)
+
+
+def _has_png_output(record: Any) -> bool:
+    outputs = getattr(record, "outputs", None) or {}
+    return any(str(k).endswith("_png") or str(k).endswith("_image") for k in outputs)
+
+
+def _load_png_bytes(record: Any) -> bytes | None:
+    """Read the first PNG/image output path from a record, return bytes."""
+    outputs = getattr(record, "outputs", None) or {}
+    for k, v in outputs.items():
+        if (str(k).endswith("_png") or str(k).endswith("_image")) and isinstance(v, str):
+            try:
+                p = Path(v)
+                if p.exists():
+                    return p.read_bytes()
+            except (OSError, ValueError):
+                pass
+    return None
+
+
+def _build_ledger_context(
+    lab: Any,
+    campaign_id: str,
+    current_record: Any,
+) -> tuple[str, list[bytes]]:
+    """Fetch all campaign records and build a text block + image list.
+
+    Returns (ledger_text, image_bytes_list).
+    Images are collected from the triggering record first (always), then
+    from the most recent figure-bearing records up to _MAX_CONTEXT_IMAGES.
+    """
+    try:
+        records = list(lab.ledger.iter_records(campaign_id=campaign_id))
+    except Exception:  # noqa: BLE001
+        return "", []
+
+    if not records:
+        return "", []
+
+    text_lines = [
+        f"=== Lab Ledger — Campaign {campaign_id} ({len(records)} records) ===\n"
+    ]
+    for rec in records:
+        text_lines.append(_serialise_record(rec))
+    ledger_text = "\n".join(text_lines)
+
+    # Collect images: triggering record first, then most-recent figure records.
+    image_bytes: list[bytes] = []
+    current_png = _load_png_bytes(current_record)
+    if current_png is not None:
+        image_bytes.append(current_png)
+
+    figure_records = [
+        r for r in reversed(records)
+        if _has_png_output(r)
+        and getattr(r, "id", None) != getattr(current_record, "id", None)
+    ]
+    for r in figure_records:
+        if len(image_bytes) >= _MAX_CONTEXT_IMAGES:
+            break
+        png = _load_png_bytes(r)
+        if png is not None:
+            image_bytes.append(png)
+
+    return ledger_text, image_bytes
+
+
+# ---------------------------------------------------------------------------
 # PolicyProvider
 # ---------------------------------------------------------------------------
 
@@ -580,6 +748,17 @@ Rules:
 - Prefer `continue` for off_target synthesis deviations (discoveries to explore).
 """
 
+_LEDGER_CITATION_PREAMBLE = """\
+You have access to the full prior history of this lab as structured records below.
+Each record has a short hash identifier (e.g. 0x4a2c).
+When your reasoning is informed by a specific prior record, CITE ITS HASH INLINE,
+e.g. "Record 0x4a2c showed the same shoulder after the 1450 \u00b0C anneal."
+Cite liberally. If no prior record is relevant, say so and reason from first principles.
+Any rendered figures attached as images correspond to the most recent figure-bearing records;
+analyse them like a scientist reading their own lab notebook.
+
+"""
+
 
 class ClaudePolicyProvider(PolicyProvider):
     """LLM-backed PolicyProvider that reads a :class:`DecisionContext`."""
@@ -599,9 +778,34 @@ class ClaudePolicyProvider(PolicyProvider):
 
     def decide(self, context: DecisionContext) -> Action:
         user = _describe_decision_context(context)
-        resp = self._transport.call(_POLICY_SYSTEM, user)
+        images: list[bytes] = []
+        system = _POLICY_SYSTEM
+
+        if self._lab is not None:
+            ledger_text, images = _build_ledger_context(
+                self._lab, context.campaign_id, context.record
+            )
+            if ledger_text:
+                system = _LEDGER_CITATION_PREAMBLE + ledger_text + "\n\n" + _POLICY_SYSTEM
+
+        resp = self._transport.call(system, user, images=images or None)
+
         if self._lab is not None:
             _persist_claim(self._lab, context.record.id, "policy_provider", user, resp)
+            if resp.context_tokens is not None:
+                try:
+                    from autolab.events import Event
+                    self._lab.events.publish(Event(
+                        kind="context_tokens",
+                        payload={
+                            "campaign_id": context.campaign_id,
+                            "record_id": context.record.id,
+                            "context_tokens": resp.context_tokens,
+                            "model": resp.model,
+                        },
+                    ))
+                except Exception:  # noqa: BLE001
+                    pass
 
         data = _safe_json(resp.text)
         if not data:

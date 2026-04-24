@@ -1201,6 +1201,170 @@ async def get_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
     }
 
 
+@app.get("/campaigns/{campaign_id}/report", response_class=HTMLResponse)
+async def campaign_report(campaign_id: str, request: Request) -> HTMLResponse:
+    """Return a self-contained HTML report for the campaign."""
+    import base64
+    from html import escape
+
+    lab = _lab(request)
+    scheduler = _scheduler(request)
+
+    # Fetch campaign state (404 if unknown)
+    try:
+        state = scheduler._get(campaign_id)
+    except KeyError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    campaign = state.campaign
+
+    # Fetch all records for this campaign
+    all_records = list(lab.ledger.iter_records(campaign_id=campaign_id))
+
+    # ------------------------------------------------------------------
+    # Find the "best" completed record (highest objective value, else last)
+    # ------------------------------------------------------------------
+    obj_key = campaign.objective.key if campaign.objective else None
+    best_record = None
+    best_val: float | None = None
+    for r in all_records:
+        if r.record_status == "completed" and r.outputs:
+            v = r.outputs.get(obj_key) if obj_key else None
+            if isinstance(v, (int, float)):
+                if best_val is None or v > best_val:
+                    best_val = v
+                    best_record = r
+    if best_record is None and all_records:
+        best_record = next(
+            (r for r in reversed(all_records) if r.record_status == "completed"), all_records[-1]
+        )
+
+    # ------------------------------------------------------------------
+    # Decision-chain records (records with a decision field)
+    # ------------------------------------------------------------------
+    decision_records = [r for r in all_records if getattr(r, "decision", None)]
+
+    # ------------------------------------------------------------------
+    # Find the last hysteresis PNG across all completed records
+    # ------------------------------------------------------------------
+    def _find_png(records):  # type: ignore[return]
+        for rec in reversed(records):
+            if rec.outputs:
+                for k, v in rec.outputs.items():
+                    if ("png" in k or "image" in k) and isinstance(v, str):
+                        p = Path(v)
+                        if p.exists():
+                            return p
+        return None
+
+    png_path = _find_png(all_records)
+    png_data_uri = ""
+    if png_path:
+        try:
+            png_b64 = base64.b64encode(png_path.read_bytes()).decode()
+            png_data_uri = f"data:image/png;base64,{png_b64}"
+        except OSError:
+            pass
+
+    # ------------------------------------------------------------------
+    # Acceptance criteria
+    # ------------------------------------------------------------------
+    ac_rows = ""
+    if campaign.acceptance_criteria:
+        for output_key, rules in (campaign.acceptance_criteria or {}).items():
+            for op, threshold in rules.items():
+                actual = best_record.outputs.get(output_key, "—") if best_record and best_record.outputs else "—"
+                ac_rows += (
+                    f"<tr><td>{escape(str(output_key))}</td>"
+                    f"<td>{escape(str(op))} {escape(str(threshold))}</td>"
+                    f"<td>{escape(str(actual))}</td></tr>\n"
+                )
+
+    # ------------------------------------------------------------------
+    # Best-candidate outputs table
+    # ------------------------------------------------------------------
+    best_rows = ""
+    if best_record and best_record.outputs:
+        for k, v in list(best_record.outputs.items())[:20]:
+            if "png" in k or "image" in k:
+                continue
+            best_rows += f"<tr><td>{escape(str(k))}</td><td>{escape(str(v))}</td></tr>\n"
+
+    # ------------------------------------------------------------------
+    # Decision chain table
+    # ------------------------------------------------------------------
+    decision_rows = ""
+    for r in decision_records[:20]:
+        d = r.decision or {}
+        action = d.get("action", "—") if isinstance(d, dict) else str(d)
+        reason = d.get("reason", "—") if isinstance(d, dict) else "—"
+        short = ("0x" + r.checksum[:6]) if r.checksum else r.id[:8]
+        decision_rows += (
+            f"<tr><td><code>{escape(short)}</code></td>"
+            f"<td>{escape(r.operation or '—')}</td>"
+            f"<td>{escape(str(action))}</td>"
+            f"<td style='max-width:400px;word-break:break-word'>{escape(str(reason)[:300])}</td></tr>\n"
+        )
+
+    # ------------------------------------------------------------------
+    # Campaign hash (checksum of last record, as a proxy)
+    # ------------------------------------------------------------------
+    campaign_hash = ""
+    if all_records:
+        campaign_hash = all_records[-1].checksum or ""
+
+    name = escape(campaign.name or campaign.id)
+    goal_text = escape(campaign.description or campaign.name or obj_key or "—")
+    status_text = escape(state.status)
+    planner_text = escape(campaign.planner_name if hasattr(campaign, "planner_name") else "—")
+
+    html = f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<title>autolab report — {name}</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 32px 24px; color: #1a1a2e; background: #f8f9fa; }}
+  h1 {{ font-size: 22px; font-weight: 600; margin-bottom: 4px; color: #111; }}
+  h2 {{ font-size: 15px; font-weight: 600; margin: 28px 0 8px; color: #2c3e50; border-bottom: 1px solid #ddd; padding-bottom: 4px; }}
+  table {{ width: 100%; border-collapse: collapse; font-size: 13px; }}
+  th {{ text-align: left; padding: 6px 8px; background: #e9ecef; font-weight: 600; color: #444; }}
+  td {{ padding: 5px 8px; border-bottom: 1px solid #eee; vertical-align: top; }}
+  code {{ font-family: monospace; background: rgba(245,158,11,.15); padding: 1px 4px; border-radius: 3px; color: #b45309; }}
+  .meta {{ font-size: 12px; color: #888; margin-top: 2px; }}
+  .hysteresis {{ margin: 12px 0; }}
+  .hysteresis img {{ max-width: 100%; border-radius: 6px; border: 1px solid #ddd; }}
+  footer {{ margin-top: 48px; font-size: 11px; color: #aaa; border-top: 1px solid #eee; padding-top: 12px; }}
+</style>
+</head>
+<body>
+<h1>{name}</h1>
+<div class="meta">Status: <strong>{status_text}</strong> · Planner: {planner_text}</div>
+
+<h2>Goal</h2>
+<p style="margin:0;font-size:13px">{goal_text}</p>
+
+<h2>Acceptance criteria</h2>
+{"<table><tr><th>Output</th><th>Criterion</th><th>Actual (best)</th></tr>" + ac_rows + "</table>" if ac_rows else "<p style='font-size:13px;color:#888'>None specified.</p>"}
+
+<h2>Winning candidate</h2>
+{"<table><tr><th>Output key</th><th>Value</th></tr>" + best_rows + "</table>" if best_rows else "<p style='font-size:13px;color:#888'>No completed records yet.</p>"}
+
+<h2>Hysteresis loop</h2>
+{"<div class='hysteresis'><img src='" + png_data_uri + "' alt='Hysteresis loop'/></div>" if png_data_uri else "<p style='font-size:13px;color:#888'>No figure available.</p>"}
+
+<h2>Decision chain</h2>
+{"<table><tr><th>Record</th><th>Operation</th><th>Action</th><th>Reason</th></tr>" + decision_rows + "</table>" if decision_rows else "<p style='font-size:13px;color:#888'>No reactive decisions recorded.</p>"}
+
+<footer>
+  autolab · campaign <code>{escape(campaign_id)}</code>
+  {"· ledger anchor <code>" + escape(campaign_hash[:16]) + "…</code>" if campaign_hash else ""}
+</footer>
+</body>
+</html>"""
+
+    return HTMLResponse(html)
+
+
 @app.post("/campaigns/{campaign_id}/pause")
 async def pause_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
     await _scheduler(request).pause(campaign_id)

@@ -57,6 +57,7 @@ MAMMOS_SENSOR_WORKFLOW = WorkflowTemplate(
             input_mappings={
                 "a_ang": "relax.a_ang",
                 "c_ang": "relax.c_ang",
+                "composition": "relax.composition",
             },
         ),
         WorkflowStep(

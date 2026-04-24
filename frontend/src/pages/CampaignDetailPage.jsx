@@ -71,24 +71,54 @@ function PlanTab({ campaign, records, resources, events, railCollapsed, onToggle
         </div>
       </div>
 
-      <ReasoningRail events={events} campaignId={campaign.campaign_id} collapsed={railCollapsed} onToggle={onToggleRail} />
+      <ReasoningRail
+        events={events}
+        campaignId={campaign.campaign_id}
+        records={campaignRecords}
+        collapsed={railCollapsed}
+        onToggle={onToggleRail}
+      />
     </div>
   );
 }
 
 function ReportTab({ campaign }) {
+  const reportUrl = `/campaigns/${campaign.campaign_id}/report`;
   return (
-    <div className="panel" style={{ padding: 24 }}>
-      <h3 style={{ margin: "0 0 8px", fontSize: 15, fontWeight: 500 }}>Campaign report</h3>
-      <p style={{ margin: "0 0 12px", color: "var(--color-muted)", fontSize: 13 }}>
-        Reports render progressively as a campaign runs and are exportable as PDF once the campaign completes.
-      </p>
-      <div style={{ fontSize: 13, color: "var(--color-muted)", marginTop: 16 }}>
-        <div><span style={{ color: "var(--color-secondary)" }}>Goal:</span> {campaign.description || campaign.name || campaign.objective?.key || "—"}</div>
-        <div><span style={{ color: "var(--color-secondary)" }}>Planner:</span> {campaign.planner || "—"}</div>
-        {campaign.workflow ? <div><span style={{ color: "var(--color-secondary)" }}>Workflow:</span> {campaign.workflow}</div> : null}
-        <div><span style={{ color: "var(--color-secondary)" }}>Status:</span> {campaign.status}</div>
+    <div className="panel" style={{ padding: 0, overflow: "hidden", minHeight: 600 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          padding: "10px 14px",
+          borderBottom: "1px solid var(--color-line-strong)",
+        }}
+      >
+        <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.07, color: "var(--color-muted)" }}>
+          Campaign report
+        </span>
+        <a
+          href={reportUrl}
+          target="_blank"
+          rel="noreferrer"
+          className="btn-secondary"
+          style={{ fontSize: 11 }}
+        >
+          Open full page ↗
+        </a>
       </div>
+      <iframe
+        src={reportUrl}
+        title="Campaign report"
+        style={{
+          width: "100%",
+          minHeight: 560,
+          border: "none",
+          display: "block",
+          background: "#f8f9fa",
+        }}
+      />
     </div>
   );
 }

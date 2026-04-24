@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { formatTime } from "../../lib/api";
+import { buildHashIndex, parseCitations, recordTooltip } from "../../utils/citeHash";
 
 function kindLabel(kind) {
   if (!kind) return "";
@@ -18,12 +19,53 @@ function kindColor(kind) {
   return "var(--color-secondary)";
 }
 
-export default function ReasoningRail({ events, campaignId, collapsed, onToggle }) {
+/**
+ * Render a text string with 0x-prefixed record-hash citations highlighted.
+ * Each match is wrapped in an amber monospace span with a tooltip.
+ * Clicking a known hash calls onCiteClick(record).
+ */
+function CitedText({ text, hashIndex, onCiteClick }) {
+  const parts = useMemo(() => parseCitations(text, hashIndex), [text, hashIndex]);
+  if (!parts || parts.length === 0) return null;
+  return (
+    <>
+      {parts.map((part, i) => {
+        if (typeof part === "string") return <span key={i}>{part}</span>;
+        const { hash, record } = part;
+        const found = record !== null;
+        return (
+          <span
+            key={i}
+            title={recordTooltip(record)}
+            onClick={found && onCiteClick ? () => onCiteClick(record) : undefined}
+            style={{
+              fontFamily: "monospace",
+              fontSize: "0.9em",
+              background: found ? "rgba(245, 158, 11, 0.18)" : "rgba(156, 163, 175, 0.18)",
+              color: found ? "var(--color-status-amber, #f59e0b)" : "var(--color-tertiary, #9ca3af)",
+              borderRadius: 3,
+              padding: "0 3px",
+              cursor: found && onCiteClick ? "pointer" : "default",
+              textDecoration: found ? "underline dotted" : "none",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {hash}
+          </span>
+        );
+      })}
+    </>
+  );
+}
+
+export default function ReasoningRail({ events, campaignId, records, collapsed, onToggle, onCiteClick }) {
   const filtered = useMemo(() => {
     if (!events) return [];
     const list = campaignId ? events.filter((e) => !e.campaign_id || e.campaign_id === campaignId) : events;
     return list.slice(-80).reverse();
   }, [events, campaignId]);
+
+  const hashIndex = useMemo(() => buildHashIndex(records), [records]);
 
   if (collapsed) {
     return (
@@ -79,38 +121,46 @@ export default function ReasoningRail({ events, campaignId, collapsed, onToggle 
             No events yet. Claims and <code>react()</code> decisions will appear here.
           </div>
         ) : (
-          filtered.map((e, i) => (
-            <div
-              key={i}
-              style={{
-                fontSize: 11,
-                padding: "6px 4px",
-                borderBottom: "1px solid var(--color-line)",
-                color: "var(--color-muted)",
-              }}
-            >
+          filtered.map((e, i) => {
+            const rawText =
+              e.message ||
+              e.summary ||
+              e.reason ||
+              e.operation ||
+              (e.record_id ? `record ${e.record_id.slice(4, 12)}…` : "");
+            return (
               <div
+                key={i}
                 style={{
-                  display: "flex",
-                  alignItems: "baseline",
-                  gap: 6,
-                  marginBottom: 2,
+                  fontSize: 11,
+                  padding: "6px 4px",
+                  borderBottom: "1px solid var(--color-line)",
+                  color: "var(--color-muted)",
                 }}
               >
-                <span style={{ color: kindColor(e.kind), fontWeight: 600 }}>{kindLabel(e.kind)}</span>
-                <span style={{ color: "var(--color-tertiary)", fontSize: 10, marginLeft: "auto" }}>
-                  {formatTime(e.ts || e.timestamp)}
-                </span>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "baseline",
+                    gap: 6,
+                    marginBottom: 2,
+                  }}
+                >
+                  <span style={{ color: kindColor(e.kind), fontWeight: 600 }}>{kindLabel(e.kind)}</span>
+                  <span style={{ color: "var(--color-tertiary)", fontSize: 10, marginLeft: "auto" }}>
+                    {formatTime(e.ts || e.timestamp)}
+                  </span>
+                </div>
+                <div style={{ fontSize: 11, color: "var(--color-muted)", lineHeight: 1.45 }}>
+                  <CitedText
+                    text={rawText}
+                    hashIndex={hashIndex}
+                    onCiteClick={onCiteClick}
+                  />
+                </div>
               </div>
-              <div style={{ fontSize: 11, color: "var(--color-muted)", lineHeight: 1.45 }}>
-                {e.message ||
-                  e.summary ||
-                  e.reason ||
-                  e.operation ||
-                  (e.record_id ? `record ${e.record_id.slice(4, 12)}…` : "")}
-              </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </aside>

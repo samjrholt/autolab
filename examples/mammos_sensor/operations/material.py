@@ -99,6 +99,7 @@ class StructureRelax(Operation):
         c_ang: float
         volume_ang3: float
         energy_ev_per_atom: float
+        composition: dict[str, float]  # echoed from inputs so downstream steps can wire it
 
     async def run(self, inputs: dict[str, Any], ctx: OperationContext) -> OperationResult:
         parsed = self.Inputs(**inputs)
@@ -131,6 +132,7 @@ class StructureRelax(Operation):
             "c_ang": result["c_ang"],
             "volume_ang3": result["volume_ang3"],
             "energy_ev_per_atom": result["energy_ev_per_atom"],
+            "composition": parsed.composition,
         }
         sample = Sample(
             label=f"relaxed-{parsed.prototype}",
@@ -181,6 +183,15 @@ class IntrinsicMagnetics0K(Operation):
         prototype: str = Field(default="Nd2Fe14B")
         a_ang: float | None = Field(default=None, description="Relaxed a (Å)")
         c_ang: float | None = Field(default=None, description="Relaxed c (Å)")
+        composition: dict[str, float] = Field(
+            default_factory=dict,
+            description=(
+                "Element → atomic count, e.g. {'Nd': 1.6, 'Dy': 0.4, 'Fe': 14, 'B': 1}. "
+                "For Nd2Fe14B: Dy substitution (x_Dy = Dy/(Nd+Dy), clipped to [0, 0.3]) "
+                "scales Ms and K1 — Ms(x) = Ms_base × (1 − 0.4x), "
+                "K1(x) = K1_base × (1 + 2.0x). Other prototypes ignore Dy."
+            ),
+        )
 
     class Outputs(BaseModel):
         model_config = ConfigDict(extra="forbid")
@@ -352,6 +363,42 @@ _PROTOTYPE_PARAMS: dict[str, dict[str, float]] = {
         "c_ang": 2.85,
         "energy_ev_per_atom": -8.30,
     },
+    "Permalloy": {  # Ni80Fe20 — soft magnet, workhorse GMR/AMR sensor material
+        "Ms0_A_per_m": 0.86e6,
+        "K1_0_J_per_m3": 1.0e2,  # near-zero uniaxial; shape anisotropy dominates
+        "Aex0_J_per_m": 1.3e-11,
+        "Tc_K": 853.0,
+        "a_ang": 3.54,
+        "c_ang": 3.54,
+        "energy_ev_per_atom": -4.90,
+    },
+    "CoFe": {  # equiatomic B2-ordered CoFe — high-Ms soft magnet
+        "Ms0_A_per_m": 2.0e6,
+        "K1_0_J_per_m3": 5.0e4,
+        "Aex0_J_per_m": 2.2e-11,
+        "Tc_K": 1200.0,
+        "a_ang": 2.86,
+        "c_ang": 2.86,
+        "energy_ev_per_atom": -8.35,
+    },
+    "CoFeB": {  # amorphous CoFeB — MTJ free/pinned layer material
+        "Ms0_A_per_m": 1.25e6,
+        "K1_0_J_per_m3": 1.0e2,  # amorphous → near-zero magnetocrystalline K1
+        "Aex0_J_per_m": 1.5e-11,
+        "Tc_K": 1000.0,
+        "a_ang": 2.86,
+        "c_ang": 2.86,
+        "energy_ev_per_atom": -8.10,
+    },
+    "YIG": {  # Y3Fe5O12 — insulating ferrimagnet, spin-wave / magnonic sensors
+        "Ms0_A_per_m": 0.14e6,
+        "K1_0_J_per_m3": -2.5e3,
+        "Aex0_J_per_m": 3.0e-12,
+        "Tc_K": 560.0,
+        "a_ang": 12.38,
+        "c_ang": 12.38,
+        "energy_ev_per_atom": -6.10,
+    },
 }
 
 
@@ -376,6 +423,7 @@ def _surrogate_relax(inputs: "StructureRelax.Inputs") -> dict[str, float]:
 
 
 def _surrogate_intrinsic(inputs: "IntrinsicMagnetics0K.Inputs") -> dict[str, float]:
+    import sys
     p = _lookup_prototype(inputs.prototype)
     # Tiny lattice-parameter sensitivity: Ms shrinks ~1% per 1% volume expansion.
     volume_factor = 1.0
@@ -383,9 +431,26 @@ def _surrogate_intrinsic(inputs: "IntrinsicMagnetics0K.Inputs") -> dict[str, flo
         ref_vol = p["a_ang"] ** 2 * p["c_ang"]
         new_vol = inputs.a_ang**2 * inputs.c_ang
         volume_factor = ref_vol / new_vol if new_vol > 0 else 1.0
+    ms = p["Ms0_A_per_m"] * volume_factor
+    k1 = p["K1_0_J_per_m3"] * volume_factor**2
+    # Dy-substitution scaling (Nd2Fe14B only).
+    if inputs.prototype == "Nd2Fe14B" and inputs.composition:
+        nd = inputs.composition.get("Nd", 0.0)
+        dy = inputs.composition.get("Dy", 0.0)
+        denom = nd + dy
+        if denom > 0 and dy > 0:
+            x_dy = min(dy / denom, 0.3)  # clip at 30% — beyond commercial range
+            ms = ms * (1.0 - 0.4 * x_dy)
+            k1 = k1 * (1.0 + 2.0 * x_dy)
+    elif inputs.composition and inputs.composition.get("Dy", 0.0) > 0:
+        print(
+            f"[autolab] Warning: Dy in composition is ignored for prototype "
+            f"{inputs.prototype!r}; this substitution model is Nd2Fe14B-specific.",
+            file=sys.stderr,
+        )
     return {
-        "Ms0_A_per_m": p["Ms0_A_per_m"] * volume_factor,
-        "K1_0_J_per_m3": p["K1_0_J_per_m3"] * volume_factor**2,
+        "Ms0_A_per_m": ms,
+        "K1_0_J_per_m3": k1,
         "Aex0_J_per_m": p["Aex0_J_per_m"],
     }
 

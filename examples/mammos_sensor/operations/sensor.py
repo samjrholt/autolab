@@ -187,6 +187,7 @@ class MicromagneticHysteresis(Operation):
         Hc_A_per_m: float  # coercive field (max |H| where M crosses zero on down-sweep)
         Mr_A_per_m: float  # remanence
         H_sweep_max_A_per_m: float
+        hysteresis_loop_png: str | None = None  # absolute path to rendered PNG
 
     async def run(self, inputs: dict[str, Any], ctx: OperationContext) -> OperationResult:
         parsed = self.Inputs(**inputs)
@@ -209,6 +210,15 @@ class MicromagneticHysteresis(Operation):
             backend = "surrogate"
 
         outputs = {"backend": backend, **result}
+        png_path = _render_hysteresis_png(
+            H=result["H_A_per_m"],
+            M=result["M_A_per_m"],
+            Hc=result.get("Hc_A_per_m"),
+            Mr=result.get("Mr_A_per_m"),
+            record_id=ctx.record_id,
+        )
+        if png_path is not None:
+            outputs["hysteresis_loop_png"] = png_path
         return OperationResult(status="completed", outputs=outputs)
 
 
@@ -334,6 +344,87 @@ def _surrogate_hysteresis(inputs: "MicromagneticHysteresis.Inputs") -> dict[str,
         "Mr_A_per_m": mr,
         "H_sweep_max_A_per_m": float(inputs.H_max_A_per_m),
     }
+
+
+def _render_hysteresis_png(
+    *,
+    H: list[float],
+    M: list[float],
+    Hc: float | None,
+    Mr: float | None,
+    record_id: str,
+) -> str | None:
+    """Render a hysteresis loop as an 800×600 PNG.
+
+    Returns the absolute path to the written PNG, or None if matplotlib
+    is not available (so the caller can silently skip image output).
+    """
+    try:
+        import tempfile
+        from pathlib import Path
+
+        import matplotlib
+        matplotlib.use("Agg")  # non-interactive backend — no display needed
+        import matplotlib.pyplot as plt
+        import numpy as np
+    except ImportError:
+        return None
+
+    # Convert to mT / kA·m⁻¹ for a physicist-friendly scale.
+    mu0 = 4 * math.pi * 1e-7
+    H_mT = [h * mu0 * 1e3 for h in H]   # A/m → mT (μ₀H)
+    M_kA = [m * 1e-3 for m in M]        # A/m → kA/m
+
+    Hc_mT = (Hc * mu0 * 1e3) if Hc is not None else None
+    Mr_kA = (Mr * 1e-3) if Mr is not None else None
+
+    fig, ax = plt.subplots(figsize=(8, 6), dpi=100)
+
+    ax.plot(H_mT, M_kA, color="#1f77b4", linewidth=1.8, zorder=3)
+
+    # Zero lines.
+    ax.axhline(0, color="k", linewidth=0.6, linestyle="--", alpha=0.5, zorder=1)
+    ax.axvline(0, color="k", linewidth=0.6, linestyle="--", alpha=0.5, zorder=1)
+
+    # Annotate Hc.
+    if Hc_mT is not None and abs(Hc_mT) > 0.001:
+        ax.annotate(
+            f"Hc = {Hc_mT:.2f} mT",
+            xy=(Hc_mT, 0),
+            xytext=(Hc_mT * 1.5 + 0.1, max(M_kA) * 0.15),
+            fontsize=9,
+            color="#d62728",
+            arrowprops={"arrowstyle": "->", "color": "#d62728", "lw": 1.2},
+            zorder=5,
+        )
+        ax.axvline(Hc_mT, color="#d62728", linewidth=0.8, linestyle=":", alpha=0.7)
+        ax.axvline(-Hc_mT, color="#d62728", linewidth=0.8, linestyle=":", alpha=0.7)
+
+    # Annotate Mr.
+    if Mr_kA is not None and abs(Mr_kA) > 0.001:
+        ax.annotate(
+            f"Mr = {Mr_kA:.1f} kA/m",
+            xy=(0, Mr_kA),
+            xytext=(max(H_mT) * 0.25, Mr_kA * 1.15),
+            fontsize=9,
+            color="#2ca02c",
+            arrowprops={"arrowstyle": "->", "color": "#2ca02c", "lw": 1.2},
+            zorder=5,
+        )
+        ax.axhline(Mr_kA, color="#2ca02c", linewidth=0.8, linestyle=":", alpha=0.7)
+
+    ax.set_xlabel(r"$\mu_0 H$ (mT)", fontsize=12)
+    ax.set_ylabel(r"$M$ (kA/m)", fontsize=12)
+    ax.set_title(f"Hysteresis loop  ·  record {record_id[:8]}", fontsize=11)
+    ax.grid(True, linewidth=0.4, alpha=0.4)
+    fig.tight_layout()
+
+    artefacts_dir = Path(tempfile.gettempdir()) / "autolab_artefacts" / record_id
+    artefacts_dir.mkdir(parents=True, exist_ok=True)
+    png_path = artefacts_dir / "hysteresis.png"
+    fig.savefig(png_path, dpi=100, bbox_inches="tight")
+    plt.close(fig)
+    return str(png_path)
 
 
 def _compute_fom(inputs: "SensorFigureOfMerit.Inputs") -> dict[str, float]:
