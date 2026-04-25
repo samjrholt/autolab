@@ -29,7 +29,13 @@ import urllib.error
 import urllib.request
 
 SHAPE_SEARCH_SPACE = {
-    "material": {"type": "categorical", "choices": ["Ni80Fe20", "FeCo"]},
+    # Three materials confirmed live in mammos_spindynamics.db (4-25-2026):
+    # Fe16N2 (~1.64 MA/m), Ni80Fe20 (~0.89 MA/m), Fe2.33Ta0.67Y (~0.54 MA/m).
+    # 3x Ms spread → 3x Hmax spread → clean head-to-head differentiation.
+    "material": {
+        "type": "categorical",
+        "choices": ["Fe16N2", "Ni80Fe20", "Fe2.33Ta0.67Y"],
+    },
     "sx_nm": {"type": "float", "low": 5.0, "high": 70.0},
     "sy_nm": {"type": "float", "low": 5.0, "high": 70.0},
 }

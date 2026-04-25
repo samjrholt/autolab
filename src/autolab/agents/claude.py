@@ -159,12 +159,22 @@ class ClaudeTransport:
 
             self._client = anthropic.Anthropic(api_key=self._api_key)
         content = _build_user_content(user, images)
-        resp = self._client.messages.create(
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": content}],
-        )
+        import anthropic as _anthropic
+        _delays = [2, 4, 8]
+        for _attempt, _delay in enumerate(_delays + [None]):
+            try:
+                resp = self._client.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=system,
+                    messages=[{"role": "user", "content": content}],
+                )
+                break
+            except _anthropic.OverloadedError:
+                if _delay is None:
+                    raise
+                import time
+                time.sleep(_delay)
         text_parts = [
             b.text for b in resp.content if getattr(b, "type", "text") == "text"
         ]
@@ -197,13 +207,22 @@ class ClaudeTransport:
 
             self._client = anthropic.Anthropic(api_key=self._api_key)
         content = _build_user_content(user, images)
-        resp = await asyncio.to_thread(
-            self._client.messages.create,
-            model=self.model,
-            max_tokens=self.max_tokens,
-            system=system,
-            messages=[{"role": "user", "content": content}],
-        )
+        import anthropic as _anthropic
+        _delays = [2, 4, 8]
+        for _attempt, _delay in enumerate(_delays + [None]):
+            try:
+                resp = await asyncio.to_thread(
+                    self._client.messages.create,
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    system=system,
+                    messages=[{"role": "user", "content": content}],
+                )
+                break
+            except _anthropic.OverloadedError:
+                if _delay is None:
+                    raise
+                await asyncio.sleep(_delay)
         text_parts = [
             b.text for b in resp.content if getattr(b, "type", "text") == "text"
         ]

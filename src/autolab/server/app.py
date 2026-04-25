@@ -1168,8 +1168,15 @@ async def start_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
         state = scheduler._get(campaign_id)
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
+    _TERMINAL = {"failed", "completed", "cancelled", "stopped"}
+    if state.status in _TERMINAL:
+        raise HTTPException(
+            409,
+            f"Campaign is in a terminal state ('{state.status}'). "
+            "Create a new campaign to run again.",
+        )
     if state.status not in ("queued",):
-        # Already started / running / terminal — report current state without error.
+        # Already running — idempotent, return current state.
         return {"ok": True, "campaign_id": campaign_id, "status": state.status}
     if state._task is None:
         scheduler._launch(state)
