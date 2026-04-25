@@ -29,8 +29,16 @@ import urllib.error
 import urllib.request
 
 SHAPE_SEARCH_SPACE = {
+    "material": {"type": "categorical", "choices": ["Ni80Fe20", "FeCo"]},
     "sx_nm": {"type": "float", "low": 5.0, "high": 70.0},
     "sy_nm": {"type": "float", "low": 5.0, "high": 70.0},
+}
+
+# Route each search-space parameter to the workflow step that should receive it.
+SHAPE_INPUT_ROUTING = {
+    "material": "material",
+    "sx_nm": "fom",
+    "sy_nm": "fom",
 }
 
 
@@ -72,14 +80,16 @@ def _campaign_body(planner: str, workflow: dict) -> dict:
             **base,
             "name": "sensor-shape-opt (optuna)",
             "description": (
-                "Shape-optimise a Permalloy superellipse sensor (Ni80Fe20 @ 300 K). "
-                "Optuna TPE sweeps (sx_nm, sy_nm) over the linear-region width Hmax. "
+                "Material + shape sweep over a soft-magnetic superellipse sensor. "
+                "Optuna TPE samples material (Ni80Fe20 / FeCo / CoFeB) and (sx_nm, sy_nm) "
+                "to maximise the linear-region width Hmax. "
                 "Prepared - start from the Console."
             ),
             "planner": "optuna",
             "planner_config": {
                 "operation": "mammos.sensor_shape_fom",
                 "search_space": SHAPE_SEARCH_SPACE,
+                "input_routing": SHAPE_INPUT_ROUTING,
             },
         }
     if planner == "claude":
@@ -88,13 +98,14 @@ def _campaign_body(planner: str, workflow: dict) -> dict:
             "name": "sensor-shape-opt (claude)",
             "description": (
                 "Same objective and bounds as the Optuna campaign - Claude as planner. "
-                "Reads campaign history and reasons about the next (sx_nm, sy_nm) to try. "
+                "Reads campaign history and reasons about the next material + geometry to try. "
                 "Prepared - start from the Console."
             ),
             "planner": "claude",
             "planner_config": {
                 "operation": "mammos.sensor_shape_fom",
                 "search_space": SHAPE_SEARCH_SPACE,
+                "input_routing": SHAPE_INPUT_ROUTING,
                 "batch_size": 1,
             },
             "use_claude_policy": True,

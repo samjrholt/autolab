@@ -51,6 +51,8 @@ dependencies = [
     "structlog>=24.1",
     # Numerics (BO planner, array outputs)
     "numpy>=1.26",
+    # Visualisation (hysteresis PNG rendering)
+    "matplotlib>=3.9",
     # Optimisers
     "optuna>=4.0",
     # Claude + MCP

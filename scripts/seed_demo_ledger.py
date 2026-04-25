@@ -1,20 +1,23 @@
 """Seed the autolab Ledger with plausible prior-run history for the hackathon demo.
 
-Writes 18 Records covering 4 narrative threads that Claude can cite by hash
-during the live demo:
+Writes 9 Records using the SAME operation names as the live demo workflow
+(mammos.sensor_material_at_T + mammos.sensor_shape_fom) so Claude sees them
+as directly relevant prior runs and cites their hashes inline.
 
-  A  Successful Permalloy sensor run (3 days ago) — baseline good design.
-  B  Nd2Fe14B FAILURE as a sensor free layer (2 days ago) — square loop, FoM≈0.
-     This is the key "recognisable anomaly" Claude should cite when it sees
-     another square loop: "Record 0xXXXX showed the same square hysteresis..."
-  C  Too-small aspect-ratio Permalloy sensor then a rerun that worked (2 days ago).
-  D  Dy-substitution overshoot — 25% Dy crashed Ms below target (1 day ago).
-  E  Human intervention note (1 day ago): "restrict Ms > 1 MA/m".
+Four narrative threads:
+
+  A  Ni80Fe20 (Permalloy) baseline — 60×20 nm ellipse, AR=3, gradient≈3.8. OK.
+  B  Circular geometry FAILURE — Ni80Fe20, 50×50 nm, AR=1. Near-square loop,
+     gradient≈0.02. KEY CITATION TARGET: Claude should say "same square loop
+     as 0xXXXX" when it sees another isotropic shape fail.
+  C  Elongated fix — Ni80Fe20 70×10 nm, AR=7, gradient≈5.8. Recovers linear range.
+  D  FeCo material upgrade — 70×10 nm, gradient≈9.4. Best run. Human intervention
+     note: enforce sx/sy ≥ 4 for all future trials.
 
 Expected citation hints (printed at the end of this script):
-  - The Nd2Fe14B square-loop record is the #1 citation target.
-  - The Dy-overshoot record motivates "try 5–10% Dy instead".
-  - The human-intervention record motivates the Ms constraint.
+  - Circular-shape record (Thread B) is the #1 citation target.
+  - FeCo record (Thread D) is the benchmark to beat.
+  - Human-intervention record constrains the search space.
 
 Usage
 -----
@@ -186,6 +189,7 @@ def _square_loop(Ms: float, Hc: float, H_max: float, n: int = 41):
 def seed(lab: Lab) -> list[Record]:
     lid = lab.lab_id
     records: list[Record] = []
+    mu0 = 4 * math.pi * 1e-7
 
     def append(r: Record) -> Record:
         saved = lab.ledger.append_sync(r)
@@ -193,259 +197,167 @@ def seed(lab: Lab) -> list[Record]:
         return saved
 
     # ------------------------------------------------------------------ #
-    # Thread A — Permalloy baseline success (3 days ago)
+    # Thread A — Ni80Fe20 baseline (3 days ago)
+    # 60×20 nm ellipse, AR=3 → clean single-domain switching, gradient≈3.8
     # ------------------------------------------------------------------ #
-    r_a1 = append(_make_record(lid, "mammos.relax_structure",
-        inputs={"composition": {"Ni": 80, "Fe": 20}, "prototype": "Permalloy"},
-        outputs={"backend": "surrogate", "a_ang": 3.54, "c_ang": 3.54,
-                 "volume_ang3": 44.4, "energy_ev_per_atom": -4.90,
-                 "composition": {"Ni": 80, "Fe": 20}},
-        created_at=_dt(3.0, 9, 0), tags=["thread:A", "material:Permalloy"],
+    r_a1 = append(_make_record(lid, "mammos.sensor_material_at_T",
+        inputs={"material": "Ni80Fe20", "temperature_K": 300.0},
+        outputs={"backend": "mammos_spindynamics", "material": "Ni80Fe20",
+                 "temperature_K": 300.0, "Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11},
+        created_at=_dt(3.0, 9, 0), tags=["thread:A", "material:Ni80Fe20"],
     ))
 
-    r_a2 = append(_make_record(lid, "mammos.intrinsic_magnetics_0k",
-        inputs={"prototype": "Permalloy", "a_ang": 3.54, "c_ang": 3.54,
-                "composition": {"Ni": 80, "Fe": 20}},
-        outputs={"backend": "surrogate", "Ms0_A_per_m": 8.6e5,
-                 "K1_0_J_per_m3": 1e2, "Aex0_J_per_m": 1.3e-11},
-        created_at=_dt(3.0, 9, 5), parent_ids=[r_a1.id], tags=["thread:A"],
-    ))
-
-    r_a3 = append(_make_record(lid, "mammos.finite_temperature_magnetics",
-        inputs={"prototype": "Permalloy", "Ms0_A_per_m": 8.6e5,
-                "K1_0_J_per_m3": 1e2, "Aex0_J_per_m": 1.3e-11,
-                "target_temp_k": 300.0},
-        outputs={"backend": "surrogate", "Tc_K": 853.0,
-                 "Ms_T_A_per_m": 8.0e5, "K1_T_J_per_m3": 88.0,
-                 "Aex_T_J_per_m": 1.25e-11, "m_T_over_Ms0": 0.93},
-        created_at=_dt(3.0, 9, 12), parent_ids=[r_a2.id], tags=["thread:A"],
-    ))
-
-    r_a4 = append(_make_record(lid, "mammos.sensor_mesh",
-        inputs={"a_nm": 500.0, "b_nm": 200.0, "n_exp": 2.0, "thickness_nm": 5.0},
-        outputs={"backend": "surrogate", "area_nm2": 314159.0,
-                 "aspect_ratio": 2.5, "mesh_path": None},
-        created_at=_dt(3.0, 9, 15), tags=["thread:A"],
-    ))
-
-    Ha, Ma, Hca, Mra = _soft_loop(Ms=8.0e5, Hc_frac=0.05, H_max=8e4)
-    png_a = _render_hysteresis_png(Ha, Ma, Hca, Mra, "A Permalloy success")
-    r_a5_out = {"backend": "surrogate", "H_A_per_m": Ha, "M_A_per_m": Ma,
-                "Hc_A_per_m": float(Hca), "Mr_A_per_m": float(Mra),
-                "H_sweep_max_A_per_m": 8e4}
+    Ha, Ma, Hca, Mra = _soft_loop(Ms=8.0e5, Hc_frac=0.22, H_max=16000)
+    png_a = _render_hysteresis_png(Ha, Ma, Hca, Mra, "A-Ni80Fe20-60x20")
+    Hmax_a = 3580.0  # A/m  (≈ 4.5 mT)
+    r_a2_out: dict = {
+        "backend": "ubermag",
+        "Hmax_A_per_m": Hmax_a, "mu0_Hmax_T": Hmax_a * mu0,
+        "gradient": 3.8, "Mr_A_per_m": 720e3,
+        "H_A_per_m": Ha, "M_A_per_m": Ma,
+        "Ms_A_per_m": 8.0e5, "sx_nm": 60.0, "sy_nm": 20.0,
+        "n_exp": 2.0, "thickness_nm": 5.0,
+    }
     if png_a:
-        r_a5_out["hysteresis_loop_png"] = png_a
-    r_a5 = append(_make_record(lid, "mammos.micromagnetic_hysteresis",
-        inputs={"Ms_A_per_m": 8.0e5, "K1_J_per_m3": 88.0,
-                "Aex_J_per_m": 1.25e-11, "area_nm2": 314159.0,
-                "aspect_ratio": 2.5, "thickness_nm": 5.0},
-        outputs=r_a5_out,
-        created_at=_dt(3.0, 9, 45), parent_ids=[r_a3.id, r_a4.id], tags=["thread:A"],
-    ))
-
-    r_a6 = append(_make_record(lid, "mammos.sensor_fom",
-        inputs={"H_A_per_m": Ha[:5], "M_A_per_m": Ma[:5],
-                "Ms_A_per_m": 8.0e5, "Hc_A_per_m": float(Hca)},
-        outputs={"backend": "analytic", "sensitivity": 3.8e-5,
-                 "linear_range_T": 0.0021, "Mr_over_Ms": 0.05,
-                 "Hc_A_per_m": float(Hca)},
-        created_at=_dt(3.0, 9, 46), parent_ids=[r_a5.id], tags=["thread:A"],
-        decision={"notes": "Good sensitivity and linear range. Baseline established."},
+        r_a2_out["hysteresis_loop_png"] = png_a
+    r_a2 = append(_make_record(lid, "mammos.sensor_shape_fom",
+        inputs={"Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11,
+                "sx_nm": 60.0, "sy_nm": 20.0, "n_exp": 2.0, "thickness_nm": 5.0},
+        outputs=r_a2_out,
+        created_at=_dt(3.0, 9, 20), parent_ids=[r_a1.id],
+        tags=["thread:A", "NOTABLE"],
+        decision={"verdict": "pass",
+                  "notes": "Ni80Fe20 60×20 nm baseline: gradient=3.8, Hmax=4.5 mT. Linear range adequate."},
     ))
 
     # ------------------------------------------------------------------ #
-    # Thread B — Nd2Fe14B FAILURE as sensor free layer (2 days ago)
-    # NB: square loop → sensitivity ≈ 0.  KEY CITATION TARGET.
+    # Thread B — Circular geometry FAILURE (2 days ago)
+    # 50×50 nm circular disk, AR=1 → near-square loop, gradient≈0.02
+    # KEY CITATION TARGET — circular/isotropic shape is disqualifying.
     # ------------------------------------------------------------------ #
-    r_b1 = append(_make_record(lid, "mammos.relax_structure",
-        inputs={"composition": {"Nd": 2, "Fe": 14, "B": 1}, "prototype": "Nd2Fe14B"},
-        outputs={"backend": "surrogate", "a_ang": 8.82, "c_ang": 12.23,
-                 "volume_ang3": 951.0, "energy_ev_per_atom": -8.12,
-                 "composition": {"Nd": 2, "Fe": 14, "B": 1}},
-        created_at=_dt(2.0, 10, 0), tags=["thread:B", "material:Nd2Fe14B"],
+    r_b1 = append(_make_record(lid, "mammos.sensor_material_at_T",
+        inputs={"material": "Ni80Fe20", "temperature_K": 300.0},
+        outputs={"backend": "mammos_spindynamics", "material": "Ni80Fe20",
+                 "temperature_K": 300.0, "Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11},
+        created_at=_dt(2.0, 10, 0), tags=["thread:B", "material:Ni80Fe20"],
     ))
 
-    r_b2 = append(_make_record(lid, "mammos.intrinsic_magnetics_0k",
-        inputs={"prototype": "Nd2Fe14B", "a_ang": 8.82, "c_ang": 12.23,
-                "composition": {"Nd": 2, "Fe": 14, "B": 1}},
-        outputs={"backend": "surrogate", "Ms0_A_per_m": 1.61e6,
-                 "K1_0_J_per_m3": 4.9e6, "Aex0_J_per_m": 8.0e-12},
-        created_at=_dt(2.0, 10, 8), parent_ids=[r_b1.id], tags=["thread:B"],
-    ))
-
-    r_b3 = append(_make_record(lid, "mammos.finite_temperature_magnetics",
-        inputs={"prototype": "Nd2Fe14B", "Ms0_A_per_m": 1.61e6,
-                "K1_0_J_per_m3": 4.9e6, "Aex0_J_per_m": 8.0e-12,
-                "target_temp_k": 300.0},
-        outputs={"backend": "surrogate", "Tc_K": 585.0,
-                 "Ms_T_A_per_m": 1.42e6, "K1_T_J_per_m3": 3.8e6,
-                 "Aex_T_J_per_m": 7.5e-12, "m_T_over_Ms0": 0.88},
-        created_at=_dt(2.0, 10, 14), parent_ids=[r_b2.id], tags=["thread:B"],
-    ))
-
-    r_b4 = append(_make_record(lid, "mammos.sensor_mesh",
-        inputs={"a_nm": 500.0, "b_nm": 200.0, "n_exp": 2.0, "thickness_nm": 5.0},
-        outputs={"backend": "surrogate", "area_nm2": 314159.0,
-                 "aspect_ratio": 2.5, "mesh_path": None},
-        created_at=_dt(2.0, 10, 16), tags=["thread:B"],
-    ))
-
-    # Nd2Fe14B has huge K1 → square loop, Hc ~ Ms*K1/(2*Ms^2) * shape
-    Hc_b = 3.2e4  # ~3.2e4 A/m (40 mT) — clearly too large for a sensor
-    Hb, Mb, Hcb, Mrb = _square_loop(Ms=1.42e6, Hc=Hc_b, H_max=8e4)
-    png_b = _render_hysteresis_png(Hb, Mb, Hcb, Mrb, "B Nd2Fe14B SQUARE LOOP")
-    r_b5_out = {"backend": "surrogate", "H_A_per_m": Hb, "M_A_per_m": Mb,
-                "Hc_A_per_m": float(Hcb), "Mr_A_per_m": float(Mrb),
-                "H_sweep_max_A_per_m": 8e4}
+    Hb, Mb, Hcb, Mrb = _square_loop(Ms=8.0e5, Hc=80.0, H_max=16000)
+    png_b = _render_hysteresis_png(Hb, Mb, Hcb, Mrb, "B-Ni80Fe20-50x50-SQUARE-LOOP")
+    Hmax_b = 40.0  # A/m  (≈ 0.05 mT — essentially zero linear range)
+    r_b2_out: dict = {
+        "backend": "ubermag",
+        "Hmax_A_per_m": Hmax_b, "mu0_Hmax_T": Hmax_b * mu0,
+        "gradient": 0.02, "Mr_A_per_m": 792e3,
+        "H_A_per_m": Hb, "M_A_per_m": Mb,
+        "Ms_A_per_m": 8.0e5, "sx_nm": 50.0, "sy_nm": 50.0,
+        "n_exp": 2.0, "thickness_nm": 5.0,
+    }
     if png_b:
-        r_b5_out["hysteresis_loop_png"] = png_b
-    r_b5 = append(_make_record(lid, "mammos.micromagnetic_hysteresis",
-        inputs={"Ms_A_per_m": 1.42e6, "K1_J_per_m3": 3.8e6,
-                "Aex_J_per_m": 7.5e-12, "area_nm2": 314159.0,
-                "aspect_ratio": 2.5, "thickness_nm": 5.0},
-        outputs=r_b5_out,
-        created_at=_dt(2.0, 10, 50), parent_ids=[r_b3.id, r_b4.id], tags=["thread:B"],
-    ))
-
-    r_b6 = append(_make_record(lid, "mammos.sensor_fom",
-        inputs={"H_A_per_m": Hb[:5], "M_A_per_m": Mb[:5],
-                "Ms_A_per_m": 1.42e6, "Hc_A_per_m": float(Hcb)},
-        outputs={"backend": "analytic", "sensitivity": 1.2e-7,
-                 "linear_range_T": 0.000012, "Mr_over_Ms": 0.92,
-                 "Hc_A_per_m": float(Hcb)},
+        r_b2_out["hysteresis_loop_png"] = png_b
+    r_b2 = append(_make_record(lid, "mammos.sensor_shape_fom",
+        inputs={"Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11,
+                "sx_nm": 50.0, "sy_nm": 50.0, "n_exp": 2.0, "thickness_nm": 5.0},
+        outputs=r_b2_out,
         status="soft_fail",
+        created_at=_dt(2.0, 10, 22), parent_ids=[r_b1.id],
+        tags=["thread:B", "NOTABLE"],
         decision={"verdict": "soft_fail",
-                  "reason": ("Nd2Fe14B is a hard magnet with near-square hysteresis; "
-                             "sensitivity is essentially zero. Unsuitable as a sensor "
-                             "free-layer material. High K1 (3.8 MJ/m³) drives square loop.")},
-        created_at=_dt(2.0, 10, 51), parent_ids=[r_b5.id], tags=["thread:B", "NOTABLE"],
+                  "reason": ("Circular disk (sx=sy=50 nm, AR=1) produces a near-square "
+                             "hysteresis loop — multi-domain vortex state switches abruptly "
+                             "with no linear sensing region. gradient=0.02 ≈ 0. "
+                             "Shape anisotropy completely absent. Isotropic geometries "
+                             "are disqualified as sensor free layers.")},
     ))
 
     # ------------------------------------------------------------------ #
-    # Thread C — aspect-ratio fix (2 days ago → 1.8 days ago)
+    # Thread C — Elongated 70×10 nm fix (1.8 days ago)
+    # AR=7 → single-domain, large linear range, gradient≈5.8
     # ------------------------------------------------------------------ #
-    r_c1 = append(_make_record(lid, "mammos.sensor_mesh",
-        inputs={"a_nm": 300.0, "b_nm": 250.0, "n_exp": 2.0, "thickness_nm": 5.0},
-        outputs={"backend": "surrogate", "area_nm2": 235619.0,
-                 "aspect_ratio": 1.2, "mesh_path": None},
-        created_at=_dt(1.8, 11, 0), tags=["thread:C", "material:Permalloy"],
-    ))
-
-    Hc1, Hm1 = 4e3 * 0.15, 4e3
-    Hc_c1, Mc_low, Hcc1, Mrc1 = _soft_loop(Ms=8.0e5, Hc_frac=0.05, H_max=8e4)
-    # low-AR → lower sensitivity; use same loop, sensitivity will be low via FOM
-    r_c2 = append(_make_record(lid, "mammos.micromagnetic_hysteresis",
-        inputs={"Ms_A_per_m": 8.0e5, "K1_J_per_m3": 88.0,
-                "Aex_J_per_m": 1.25e-11, "area_nm2": 235619.0,
-                "aspect_ratio": 1.2, "thickness_nm": 5.0},
-        outputs={"backend": "surrogate", "H_A_per_m": Hc_c1,
-                 "M_A_per_m": Mc_low, "Hc_A_per_m": float(Hcc1),
-                 "Mr_A_per_m": float(Mrc1), "H_sweep_max_A_per_m": 8e4},
-        created_at=_dt(1.8, 11, 30), parent_ids=[r_c1.id, r_a3.id], tags=["thread:C"],
-    ))
-
-    r_c3 = append(_make_record(lid, "mammos.sensor_fom",
-        inputs={"H_A_per_m": Hc_c1[:5], "M_A_per_m": Mc_low[:5],
-                "Ms_A_per_m": 8.0e5, "Hc_A_per_m": float(Hcc1)},
-        outputs={"backend": "analytic", "sensitivity": 0.9e-5,
-                 "linear_range_T": 0.0005, "Mr_over_Ms": 0.04,
-                 "Hc_A_per_m": float(Hcc1)},
-        status="soft_fail",
-        decision={"verdict": "soft_fail",
-                  "reason": "Low aspect ratio (1.2:1) insufficient shape anisotropy; retry with AR≥3."},
-        created_at=_dt(1.8, 11, 31), parent_ids=[r_c2.id], tags=["thread:C"],
-    ))
-
-    # Rerun with AR=3
-    r_c4 = append(_make_record(lid, "mammos.sensor_mesh",
-        inputs={"a_nm": 600.0, "b_nm": 200.0, "n_exp": 2.0, "thickness_nm": 5.0},
-        outputs={"backend": "surrogate", "area_nm2": 376991.0,
-                 "aspect_ratio": 3.0, "mesh_path": None},
-        created_at=_dt(1.7, 14, 0), tags=["thread:C"],
-        decision={"retry_of": r_c1.id, "reason": "increased aspect ratio to 3:1"},
-    ))
-
-    Hc_fix, Mc_fix, Hcc_fix, Mrc_fix = _soft_loop(Ms=8.0e5, Hc_frac=0.08, H_max=8e4)
-    png_c = _render_hysteresis_png(Hc_fix, Mc_fix, Hcc_fix, Mrc_fix, "C fix AR=3 success")
-    r_c5_out = {"backend": "surrogate", "H_A_per_m": Hc_fix, "M_A_per_m": Mc_fix,
-                "Hc_A_per_m": float(Hcc_fix), "Mr_A_per_m": float(Mrc_fix),
-                "H_sweep_max_A_per_m": 8e4}
+    Hc, Mc, Hcc, Mrc = _soft_loop(Ms=8.0e5, Hc_frac=0.35, H_max=16000)
+    png_c = _render_hysteresis_png(Hc, Mc, Hcc, Mrc, "C-Ni80Fe20-70x10")
+    Hmax_c = 5570.0  # A/m  (≈ 7.0 mT)
+    r_c1_out: dict = {
+        "backend": "ubermag",
+        "Hmax_A_per_m": Hmax_c, "mu0_Hmax_T": Hmax_c * mu0,
+        "gradient": 5.8, "Mr_A_per_m": 760e3,
+        "H_A_per_m": Hc, "M_A_per_m": Mc,
+        "Ms_A_per_m": 8.0e5, "sx_nm": 70.0, "sy_nm": 10.0,
+        "n_exp": 2.0, "thickness_nm": 5.0,
+    }
     if png_c:
-        r_c5_out["hysteresis_loop_png"] = png_c
-    r_c5 = append(_make_record(lid, "mammos.micromagnetic_hysteresis",
-        inputs={"Ms_A_per_m": 8.0e5, "K1_J_per_m3": 88.0,
-                "Aex_J_per_m": 1.25e-11, "area_nm2": 376991.0,
-                "aspect_ratio": 3.0, "thickness_nm": 5.0},
-        outputs=r_c5_out,
-        created_at=_dt(1.7, 14, 30), parent_ids=[r_c4.id, r_a3.id], tags=["thread:C"],
-    ))
-
-    r_c6 = append(_make_record(lid, "mammos.sensor_fom",
-        inputs={"H_A_per_m": Hc_fix[:5], "M_A_per_m": Mc_fix[:5],
-                "Ms_A_per_m": 8.0e5, "Hc_A_per_m": float(Hcc_fix)},
-        outputs={"backend": "analytic", "sensitivity": 4.2e-5,
-                 "linear_range_T": 0.0024, "Mr_over_Ms": 0.06,
-                 "Hc_A_per_m": float(Hcc_fix)},
-        decision={"verdict": "pass", "notes": "AR=3:1 recovers sensitivity. Shape lesson confirmed."},
-        created_at=_dt(1.7, 14, 31), parent_ids=[r_c5.id], tags=["thread:C", "NOTABLE"],
+        r_c1_out["hysteresis_loop_png"] = png_c
+    r_c1 = append(_make_record(lid, "mammos.sensor_shape_fom",
+        inputs={"Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11,
+                "sx_nm": 70.0, "sy_nm": 10.0, "n_exp": 2.0, "thickness_nm": 5.0},
+        outputs=r_c1_out,
+        created_at=_dt(1.8, 11, 0), parent_ids=[r_b1.id],
+        tags=["thread:C", "NOTABLE"],
+        decision={"verdict": "pass",
+                  "retry_of": r_b2.id,
+                  "notes": ("Elongated 70×10 nm (AR=7) recovers single-domain switching "
+                            "and a broad linear range. gradient=5.8 vs 0.02 for circular. "
+                            "Shape lesson confirmed: AR≥4 required.")},
     ))
 
     # ------------------------------------------------------------------ #
-    # Thread D — Dy-substitution overshoot (1 day ago)
+    # Thread D — FeCo material upgrade (1 day ago)
+    # Higher Ms → larger signal → gradient≈9.4 at same 70×10 nm geometry
     # ------------------------------------------------------------------ #
-    x_Dy = 0.25  # 25% → Ms crashes
-    Ms_dy = 1.61e6 * (1 - 0.4 * x_Dy)
-    K1_dy = 4.9e6 * (1 + 2.0 * x_Dy)
-
-    r_d1 = append(_make_record(lid, "mammos.relax_structure",
-        inputs={"composition": {"Nd": 1.5, "Dy": 0.5, "Fe": 14, "B": 1}, "prototype": "Nd2Fe14B"},
-        outputs={"backend": "surrogate", "a_ang": 8.81, "c_ang": 12.20,
-                 "volume_ang3": 945.0, "energy_ev_per_atom": -8.08,
-                 "composition": {"Nd": 1.5, "Dy": 0.5, "Fe": 14, "B": 1}},
-        created_at=_dt(1.0, 9, 0), tags=["thread:D", "material:Nd2Fe14B-Dy25"],
+    r_d1 = append(_make_record(lid, "mammos.sensor_material_at_T",
+        inputs={"material": "FeCo", "temperature_K": 300.0},
+        outputs={"backend": "mammos_spindynamics", "material": "FeCo",
+                 "temperature_K": 300.0, "Ms_A_per_m": 1.9e6, "A_J_per_m": 2.8e-11},
+        created_at=_dt(1.0, 9, 0), tags=["thread:D", "material:FeCo"],
     ))
 
-    r_d2 = append(_make_record(lid, "mammos.intrinsic_magnetics_0k",
-        inputs={"prototype": "Nd2Fe14B", "a_ang": 8.81, "c_ang": 12.20,
-                "composition": {"Nd": 1.5, "Dy": 0.5, "Fe": 14, "B": 1}},
-        outputs={"backend": "surrogate", "Ms0_A_per_m": Ms_dy,
-                 "K1_0_J_per_m3": K1_dy, "Aex0_J_per_m": 8.0e-12},
-        created_at=_dt(1.0, 9, 8), parent_ids=[r_d1.id], tags=["thread:D"],
-    ))
-
-    Ms_dy_T = Ms_dy * 0.86  # Kuzmin @ 300K with lower Tc
-    K1_dy_T = K1_dy * 0.75
-
-    r_d3 = append(_make_record(lid, "mammos.finite_temperature_magnetics",
-        inputs={"prototype": "Nd2Fe14B", "Ms0_A_per_m": Ms_dy,
-                "K1_0_J_per_m3": K1_dy, "Aex0_J_per_m": 8.0e-12,
-                "target_temp_k": 300.0},
-        outputs={"backend": "surrogate", "Tc_K": 540.0,
-                 "Ms_T_A_per_m": Ms_dy_T, "K1_T_J_per_m3": K1_dy_T,
-                 "Aex_T_J_per_m": 7.8e-12, "m_T_over_Ms0": 0.86},
-        created_at=_dt(1.0, 9, 15), parent_ids=[r_d2.id], tags=["thread:D"],
-        decision={"notes": f"25% Dy: Ms={Ms_dy_T/1e6:.3f} MA/m — BELOW 1 MA/m target. "
-                           "K1 boosted to 12.25 MJ/m³ but sensor sensitivity destroyed."},
+    Hd, Md, Hcd, Mrd = _soft_loop(Ms=1.9e6, Hc_frac=0.33, H_max=16000)
+    png_d = _render_hysteresis_png(Hd, Md, Hcd, Mrd, "D-FeCo-70x10")
+    Hmax_d = 8360.0  # A/m  (≈ 10.5 mT)
+    r_d2_out: dict = {
+        "backend": "ubermag",
+        "Hmax_A_per_m": Hmax_d, "mu0_Hmax_T": Hmax_d * mu0,
+        "gradient": 9.4, "Mr_A_per_m": 1.71e6,
+        "H_A_per_m": Hd, "M_A_per_m": Md,
+        "Ms_A_per_m": 1.9e6, "sx_nm": 70.0, "sy_nm": 10.0,
+        "n_exp": 2.0, "thickness_nm": 5.0,
+    }
+    if png_d:
+        r_d2_out["hysteresis_loop_png"] = png_d
+    r_d2 = append(_make_record(lid, "mammos.sensor_shape_fom",
+        inputs={"Ms_A_per_m": 1.9e6, "A_J_per_m": 2.8e-11,
+                "sx_nm": 70.0, "sy_nm": 10.0, "n_exp": 2.0, "thickness_nm": 5.0},
+        outputs=r_d2_out,
+        created_at=_dt(1.0, 9, 25), parent_ids=[r_d1.id],
+        tags=["thread:D", "NOTABLE"],
+        decision={"verdict": "pass",
+                  "notes": ("FeCo 70×10 nm: gradient=9.4, Hmax=10.5 mT. "
+                            "Best result to date. Higher Ms (1.9 MA/m vs 0.8 MA/m) "
+                            "amplifies the signal without degrading shape anisotropy.")},
     ))
 
     # ------------------------------------------------------------------ #
-    # Thread E — Human intervention (1 day ago)
+    # Human intervention (1 day ago)
+    # Constraint: elongated shapes only (sx/sy ≥ 4)
     # ------------------------------------------------------------------ #
     r_e1 = append(_make_record(lid, "human_intervention",
         inputs={},
-        outputs={"constraint": "Ms_T_A_per_m >= 1e6",
-                 "rationale": ("Sensor free-layer requires Ms > 1 MA/m for adequate "
-                               "signal-to-noise. Dy substitution above ~15% pushes Ms "
-                               "below this threshold. Restrict search to x_Dy ≤ 0.10.")},
-        created_at=_dt(1.0, 11, 30), tags=["intervention", "NOTABLE"],
+        outputs={"constraint": "sx_nm / sy_nm >= 4",
+                 "rationale": ("Circular and near-isotropic shapes (AR < 4) consistently "
+                               "produce multi-domain vortex states and near-square loops "
+                               "with no linear sensing region (see 0x{} for the definitive "
+                               "failure case). All future shape proposals must satisfy "
+                               "sx/sy ≥ 4.".format(
+                                   (r_b2.checksum or "")[:6]))},
+        created_at=_dt(1.0, 11, 0), tags=["intervention", "NOTABLE"],
         module="human.v1", resource_kind=None,
-        decision={"author": "scientist", "constraint_added": "Ms_T >= 1 MA/m"},
+        decision={"author": "scientist", "constraint_added": "sx/sy >= 4"},
     ))
 
     return records
 
-
 def main() -> None:
+    global CAMPAIGN_ID
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--lab-root", default=LAB_ROOT_DEFAULT)
     parser.add_argument("--campaign-id", default=CAMPAIGN_ID)
@@ -458,7 +370,6 @@ def main() -> None:
         shutil.rmtree(root)
         print(f"[seed] Cleared {root}")
 
-    global CAMPAIGN_ID
     CAMPAIGN_ID = args.campaign_id
 
     lab = Lab(root)

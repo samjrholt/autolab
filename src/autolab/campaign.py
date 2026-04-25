@@ -248,10 +248,21 @@ class CampaignRunner:
                 # If a workflow is configured, run it with the proposed step's inputs
                 if self.campaign.workflow is not None:
                     workflow_step_ids = _find_workflow_steps(self.campaign.workflow, step.operation)
+                    # Default: broadcast the flat inputs to every workflow step
+                    # that matches the planner's target operation.
+                    input_overrides: dict[str, dict[str, Any]] = {
+                        sid: dict(step.inputs) for sid in workflow_step_ids
+                    }
+                    # Routed step_inputs override the broadcast for any step they
+                    # cover (this is how a planner spreads trial parameters
+                    # across e.g. material → step1, geometry → step2).
+                    if step.step_inputs:
+                        for sid, sinputs in step.step_inputs.items():
+                            input_overrides[sid] = dict(sinputs)
                     wf_result = await self.lab._workflow_engine.run(
                         self.campaign.workflow,
                         self._run,
-                        input_overrides={step_id: step.inputs for step_id in workflow_step_ids},
+                        input_overrides=input_overrides,
                         decision_overrides={
                             step_id: dict(step.decision) for step_id in workflow_step_ids
                         },

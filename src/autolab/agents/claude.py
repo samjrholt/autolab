@@ -690,37 +690,41 @@ def _build_ledger_context(
     from the most recent figure-bearing records up to _MAX_CONTEXT_IMAGES.
     """
     try:
-        records = list(lab.ledger.iter_records(campaign_id=campaign_id))
+        records = list(lab.ledger.iter_records())
     except Exception:  # noqa: BLE001
         return "", []
 
     if not records:
         return "", []
 
+    n_current = sum(1 for r in records if getattr(r, "campaign_id", None) == campaign_id)
+    n_prior = len(records) - n_current
     text_lines = [
-        f"=== Lab Ledger — Campaign {campaign_id} ({len(records)} records) ===\n"
+        f"=== Lab Ledger ({len(records)} records: {n_prior} from prior runs, "
+        f"{n_current} from current campaign {campaign_id}) ===\n"
     ]
     for rec in records:
         text_lines.append(_serialise_record(rec))
     ledger_text = "\n".join(text_lines)
 
-    # Collect images: triggering record first, then most-recent figure records.
+    # Only attach images when the triggering record is itself figure-bearing.
+    # Non-visual decisions (material lookup, intervention, equipment failures)
+    # do not benefit from prior hysteresis PNGs and would just bloat tokens.
     image_bytes: list[bytes] = []
     current_png = _load_png_bytes(current_record)
     if current_png is not None:
         image_bytes.append(current_png)
-
-    figure_records = [
-        r for r in reversed(records)
-        if _has_png_output(r)
-        and getattr(r, "id", None) != getattr(current_record, "id", None)
-    ]
-    for r in figure_records:
-        if len(image_bytes) >= _MAX_CONTEXT_IMAGES:
-            break
-        png = _load_png_bytes(r)
-        if png is not None:
-            image_bytes.append(png)
+        figure_records = [
+            r for r in reversed(records)
+            if _has_png_output(r)
+            and getattr(r, "id", None) != getattr(current_record, "id", None)
+        ]
+        for r in figure_records:
+            if len(image_bytes) >= _MAX_CONTEXT_IMAGES:
+                break
+            png = _load_png_bytes(r)
+            if png is not None:
+                image_bytes.append(png)
 
     return ledger_text, image_bytes
 
@@ -864,7 +868,13 @@ available resources, and recent history. Reply with a single compact JSON object
 
 Rules:
 - Only use tool names that appear in the `tools` list.
-- inputs MUST respect each tool's input schema.
+- When a "Search space bounds" section is present, `inputs` MUST contain ONLY the
+  search-space parameter names (one entry per parameter), with values inside the
+  declared bounds or `choices`. Do NOT add extra fields from the tool schema —
+  the campaign fills those in itself. The `decision` object is for free-form
+  rationale only, not for parameter values.
+- When no Search space bounds section is present, `inputs` MUST respect the
+  tool's input schema directly.
 - Prefer small batches (1-4 proposals) unless resources clearly support more.
 - Never emit prose outside the JSON.
 """
@@ -890,6 +900,7 @@ class ClaudePlanner(Planner):
         search_space: dict[str, dict[str, Any]] | None = None,
         batch_size: int = 1,
         fixed_inputs: dict[str, Any] | None = None,
+        input_routing: dict[str, str] | None = None,
     ) -> None:
         super().__init__(policy=policy or ClaudePolicyProvider(lab=lab, transport=transport))
         self._lab = lab
@@ -899,6 +910,7 @@ class ClaudePlanner(Planner):
         self._search_space = dict(search_space or {})
         self._batch_size = max(1, int(batch_size))
         self._fixed_inputs = dict(fixed_inputs or {})
+        self._input_routing = dict(input_routing or {})
 
     def plan(self, context: PlanContext) -> list[ProposedStep]:
         user = _describe_plan_context(
@@ -908,6 +920,7 @@ class ClaudePlanner(Planner):
             search_space=self._search_space,
             fixed_inputs=self._fixed_inputs,
             batch_size=self._batch_size,
+            input_routing=self._input_routing,
         )
         resp = self._transport.call(_PLANNER_SYSTEM, user)
         if self._lab is not None:
@@ -939,10 +952,17 @@ class ClaudePlanner(Planner):
             inputs = _normalise_planner_inputs(inputs, self._search_space)
             if inputs is None:
                 continue
+            step_inputs: dict[str, dict[str, Any]] | None = None
+            if self._input_routing:
+                step_inputs = {}
+                for name, target in self._input_routing.items():
+                    if name in inputs:
+                        step_inputs.setdefault(target, {})[name] = inputs.pop(name)
             out.append(
                 ProposedStep(
                     operation=op,
                     inputs=inputs,
+                    step_inputs=step_inputs,
                     decision={
                         "planner": self.name,
                         "method": "llm",
@@ -965,6 +985,7 @@ def _describe_plan_context(
     search_space: dict[str, dict[str, Any]] | None = None,
     fixed_inputs: dict[str, Any] | None = None,
     batch_size: int = 1,
+    input_routing: dict[str, str] | None = None,
 ) -> str:
     lines = [
         "Objective:",
@@ -986,6 +1007,10 @@ def _describe_plan_context(
         lines.append("Search space bounds:")
         for name, spec in search_space.items():
             lines.append(f"  - {name}: {json.dumps(spec, default=str)}")
+    if input_routing:
+        lines.append("Parameter routing (which workflow step receives each search-space param):")
+        for name, target in input_routing.items():
+            lines.append(f"  - {name} -> step_id={target}")
     if fixed_inputs:
         lines.append(f"Fixed inputs: {json.dumps(fixed_inputs, default=str)}")
     if lab is not None:

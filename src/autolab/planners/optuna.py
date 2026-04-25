@@ -73,6 +73,11 @@ class OptunaConfig:
     sampler: SamplerSpec = "tpe"
     seed: int | None = 42
     fixed_inputs: dict[str, Any] = field(default_factory=dict)
+    # Optional per-parameter routing for workflow-backed campaigns.
+    # Maps a search-space parameter name to the workflow step_id that
+    # should receive it. Parameters not listed here flow to whichever
+    # step(s) match `operation` (legacy behaviour).
+    input_routing: dict[str, str] = field(default_factory=dict)
 
 
 def _build_sampler(sampler: SamplerSpec, seed: int | None) -> _optuna.samplers.BaseSampler:
@@ -219,9 +224,19 @@ class OptunaPlanner(Planner):
     def _propose_step(self, trial_number: int, params: dict[str, Any]) -> ProposedStep:
         inputs: dict[str, Any] = dict(self.config.fixed_inputs)
         inputs.update(params)
+        step_inputs: dict[str, dict[str, Any]] | None = None
+        if self.config.input_routing:
+            # Routed params go to their target workflow step; unrouted params
+            # remain in `inputs` and are broadcast by the campaign to whichever
+            # workflow steps match the planner's operation.
+            step_inputs = {}
+            for name, target in self.config.input_routing.items():
+                if name in inputs:
+                    step_inputs.setdefault(target, {})[name] = inputs.pop(name)
         return ProposedStep(
             operation=self.config.operation,
             inputs=inputs,
+            step_inputs=step_inputs,
             decision={
                 "planner": self.name,
                 "method": "optuna",

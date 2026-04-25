@@ -290,7 +290,9 @@ class Ledger:
             clauses.append("record_status = ?")
             params.append(status)
         if latest_only:
-            clauses.append("version = (SELECT MAX(version) FROM records WHERE id = records.id)")
+            clauses.append(
+                "version = (SELECT MAX(version) FROM records r2 WHERE r2.id = records.id)"
+            )
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         order = "ORDER BY created_at ASC" if latest_only else "ORDER BY created_at ASC, version ASC"
         sql = f"SELECT payload_json FROM records {where} {order}"

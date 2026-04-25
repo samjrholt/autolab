@@ -33,6 +33,7 @@ from autolab.operations.base import Operation, OperationContext
 
 from examples.mammos_sensor._strict import strict_failure, strict_mode
 from examples.mammos_sensor.operations.material import _executor_from_ctx
+from examples.mammos_sensor.operations.sensor import _render_hysteresis_png
 from examples.mammos_sensor.vm import ScriptError, VMError
 
 
@@ -149,6 +150,7 @@ class SensorShapeFOM(Operation):
         sy_nm: float
         n_exp: float
         thickness_nm: float
+        hysteresis_loop_png: str | None = None  # absolute path to rendered PNG
 
     async def run(self, inputs: dict[str, Any], ctx: OperationContext) -> OperationResult:
         parsed = self.Inputs(**inputs)
@@ -179,22 +181,33 @@ class SensorShapeFOM(Operation):
                 "backend": result.get("backend_used", "ubermag"),
             },
         )
+        h_out = [float(x) for x in result["H_A_per_m"]]
+        m_out = [float(x) for x in result["M_A_per_m"]]
+        png_path = _render_hysteresis_png(
+            H=h_out,
+            M=m_out,
+            Hc=None,
+            Mr=float(result.get("Mr_A_per_m", 0.0)),
+            record_id=ctx.record_id,
+        )
+        outputs: dict[str, Any] = {
+            "backend": result.get("backend_used", "ubermag"),
+            "Hmax_A_per_m": float(result["Hmax_A_per_m"]),
+            "mu0_Hmax_T": float(result["mu0_Hmax_T"]),
+            "gradient": float(result["gradient"]),
+            "Mr_A_per_m": float(result["Mr_A_per_m"]),
+            "H_A_per_m": h_out,
+            "M_A_per_m": m_out,
+            "Ms_A_per_m": parsed.Ms_A_per_m,
+            "sx_nm": parsed.sx_nm,
+            "sy_nm": parsed.sy_nm,
+            "n_exp": parsed.n_exp,
+            "thickness_nm": parsed.thickness_nm,
+            "hysteresis_loop_png": png_path,
+        }
         return OperationResult(
             status="completed",
-            outputs={
-                "backend": result.get("backend_used", "ubermag"),
-                "Hmax_A_per_m": float(result["Hmax_A_per_m"]),
-                "mu0_Hmax_T": float(result["mu0_Hmax_T"]),
-                "gradient": float(result["gradient"]),
-                "Mr_A_per_m": float(result["Mr_A_per_m"]),
-                "H_A_per_m": [float(x) for x in result["H_A_per_m"]],
-                "M_A_per_m": [float(x) for x in result["M_A_per_m"]],
-                "Ms_A_per_m": parsed.Ms_A_per_m,
-                "sx_nm": parsed.sx_nm,
-                "sy_nm": parsed.sy_nm,
-                "n_exp": parsed.n_exp,
-                "thickness_nm": parsed.thickness_nm,
-            },
+            outputs=outputs,
             new_sample=sample,
         )
 

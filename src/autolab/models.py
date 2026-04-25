@@ -324,6 +324,12 @@ class ProposedStep(BaseModel):
     id: str = Field(default_factory=lambda: _new_id("prop"))
     operation: str
     inputs: dict[str, Any] = Field(default_factory=dict)
+    # Per-step input overrides for workflow-backed campaigns. When set,
+    # the campaign uses this dict directly as input_overrides instead of
+    # broadcasting `inputs` to every step matching `operation`. Lets a
+    # planner spread its trial parameters across multiple workflow steps
+    # (e.g. material to step 1, geometry to step 2).
+    step_inputs: dict[str, dict[str, Any]] | None = None
     source_record_ids: list[str] = Field(default_factory=list)
     experiment_id: str | None = None
     decision: dict[str, Any] = Field(default_factory=dict)
