@@ -119,6 +119,39 @@ function paramsToSearchSpace(params) {
   return space;
 }
 
+function inferClaudePlannerConfig(draft, status) {
+  const existing = draft?.campaign?.planner_config || draft?.planner_config || {};
+  if (existing.operation) return existing;
+
+  const objectiveKey = draft?.campaign?.objective?.key;
+  const tools = status?.capabilities || status?.tools || [];
+  const toolByCapability = new Map(tools.map((tool) => [tool.capability || tool.name, tool]));
+
+  const draftWorkflow = draft?.workflow;
+  const workflowName = typeof draftWorkflow === "string" ? draftWorkflow : draftWorkflow?.name;
+  const workflow =
+    (draftWorkflow && typeof draftWorkflow === "object" ? draftWorkflow : null) ||
+    (status?.workflows || []).find((item) => item.name === workflowName);
+
+  const steps = workflow?.steps || [];
+  if (steps.length) {
+    const objectiveStep = [...steps].reverse().find((step) => {
+      const tool = toolByCapability.get(step.operation);
+      return objectiveKey && tool?.outputs && Object.prototype.hasOwnProperty.call(tool.outputs, objectiveKey);
+    });
+    const target = objectiveStep || steps[steps.length - 1];
+    if (target?.operation) return { ...existing, operation: target.operation };
+  }
+
+  const objectiveTool = tools.find((tool) => {
+    return objectiveKey && tool?.outputs && Object.prototype.hasOwnProperty.call(tool.outputs, objectiveKey);
+  });
+  if (objectiveTool?.capability || objectiveTool?.name) {
+    return { ...existing, operation: objectiveTool.capability || objectiveTool.name };
+  }
+  return existing;
+}
+
 export default function NewCampaignSlideOver({ open, onClose, status, refresh }) {
   // Manual form state
   const [name, setName] = useState("");
@@ -233,7 +266,7 @@ export default function NewCampaignSlideOver({ open, onClose, status, refresh })
         workflow: draft.workflow || undefined,
         priority: 50,
         planner: "claude",
-        planner_config: {},
+        planner_config: inferClaudePlannerConfig(draft, status),
         use_claude_policy: true,
       });
       setDraft(null);

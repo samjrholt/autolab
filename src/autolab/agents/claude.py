@@ -39,7 +39,7 @@ import json
 import os
 import re
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -160,8 +160,9 @@ class ClaudeTransport:
             self._client = anthropic.Anthropic(api_key=self._api_key)
         content = _build_user_content(user, images)
         import anthropic as _anthropic
+
         _delays = [2, 4, 8]
-        for _attempt, _delay in enumerate(_delays + [None]):
+        for _attempt, _delay in enumerate([*_delays, None]):
             try:
                 resp = self._client.messages.create(
                     model=self.model,
@@ -174,10 +175,9 @@ class ClaudeTransport:
                 if _delay is None:
                     raise
                 import time
+
                 time.sleep(_delay)
-        text_parts = [
-            b.text for b in resp.content if getattr(b, "type", "text") == "text"
-        ]
+        text_parts = [b.text for b in resp.content if getattr(b, "type", "text") == "text"]
         ctx_tokens = getattr(getattr(resp, "usage", None), "input_tokens", None)
         return ClaudeResponse(
             text="".join(text_parts),
@@ -208,8 +208,9 @@ class ClaudeTransport:
             self._client = anthropic.Anthropic(api_key=self._api_key)
         content = _build_user_content(user, images)
         import anthropic as _anthropic
+
         _delays = [2, 4, 8]
-        for _attempt, _delay in enumerate(_delays + [None]):
+        for _attempt, _delay in enumerate([*_delays, None]):
             try:
                 resp = await asyncio.to_thread(
                     self._client.messages.create,
@@ -223,9 +224,7 @@ class ClaudeTransport:
                 if _delay is None:
                     raise
                 await asyncio.sleep(_delay)
-        text_parts = [
-            b.text for b in resp.content if getattr(b, "type", "text") == "text"
-        ]
+        text_parts = [b.text for b in resp.content if getattr(b, "type", "text") == "text"]
         ctx_tokens = getattr(getattr(resp, "usage", None), "input_tokens", None)
         return ClaudeResponse(
             text="".join(text_parts),
@@ -236,22 +235,22 @@ class ClaudeTransport:
         )
 
 
-def _build_user_content(
-    text: str, images: list[bytes] | None
-) -> str | list[dict[str, Any]]:
+def _build_user_content(text: str, images: list[bytes] | None) -> str | list[dict[str, Any]]:
     """Build the user message content. Returns a plain string if no images."""
     if not images:
         return text
     content: list[dict[str, Any]] = []
     for img_bytes in images:
-        content.append({
-            "type": "image",
-            "source": {
-                "type": "base64",
-                "media_type": "image/png",
-                "data": base64.b64encode(img_bytes).decode("ascii"),
-            },
-        })
+        content.append(
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": "image/png",
+                    "data": base64.b64encode(img_bytes).decode("ascii"),
+                },
+            }
+        )
     content.append({"type": "text", "text": text})
     return content
 
@@ -328,7 +327,9 @@ def _offline_response(system: str, user: str) -> str:
         if objective_key is None:
             questions.append("Which output or metric should the campaign optimise?")
         if chosen_tool is not None and chosen_tool["inputs"] and not has_input_guidance:
-            questions.append("Which inputs, search ranges, or fixed conditions should define the campaign?")
+            questions.append(
+                "Which inputs, search ranges, or fixed conditions should define the campaign?"
+            )
         if questions:
             return json.dumps(
                 {
@@ -339,7 +340,11 @@ def _offline_response(system: str, user: str) -> str:
                     "notes": "I need the operation, objective, and campaign conditions before I can draft a defensible campaign.",
                 }
             )
-        direction = "minimise" if any(word in goal_text for word in ("minimise", "minimize", "reduce", "lower")) else "maximise"
+        direction = (
+            "minimise"
+            if any(word in goal_text for word in ("minimise", "minimize", "reduce", "lower"))
+            else "maximise"
+        )
         capability = chosen_tool["capability"] if chosen_tool is not None else "operation"
         objective = objective_key or "objective"
         workflow = None
@@ -347,7 +352,9 @@ def _offline_response(system: str, user: str) -> str:
             workflow = {
                 "name": f"{capability}-workflow".replace("_", "-"),
                 "description": f"Run {capability} as the evaluation workflow for this campaign.",
-                "steps": [{"step_id": "run", "operation": capability, "depends_on": [], "inputs": {}}],
+                "steps": [
+                    {"step_id": "run", "operation": capability, "depends_on": [], "inputs": {}}
+                ],
             }
         return json.dumps(
             {
@@ -441,7 +448,10 @@ def _offline_response(system: str, user: str) -> str:
                         "backend": "local",
                         "connection": {"working_dir": ".autolab-work"},
                         "tags": {"role": "workstation"},
-                        "capabilities": {"backend": "local", "connection": {"working_dir": ".autolab-work"}},
+                        "capabilities": {
+                            "backend": "local",
+                            "connection": {"working_dir": ".autolab-work"},
+                        },
                         "description": "Local workstation for running scripts and simulations.",
                         "typical_operation_durations": {"run_simulation": 5},
                     },
@@ -593,9 +603,11 @@ def _offline_select_objective(
     chosen_tool: dict[str, Any] | None,
     tools: list[dict[str, Any]],
 ) -> str | None:
-    candidate_outputs = chosen_tool["outputs"] if chosen_tool is not None else [
-        output for tool in tools for output in tool["outputs"]
-    ]
+    candidate_outputs = (
+        chosen_tool["outputs"]
+        if chosen_tool is not None
+        else [output for tool in tools for output in tool["outputs"]]
+    )
     for output in candidate_outputs:
         if _offline_mentions_identifier(goal_text, output):
             return output
@@ -606,9 +618,13 @@ def _offline_select_objective(
     )
     if generic_match:
         return generic_match.group(1)
-    if chosen_tool is not None and len(chosen_tool["outputs"]) == 1 and any(
-        word in goal_text
-        for word in ("maximise", "maximize", "minimise", "minimize", "optimise", "optimize")
+    if (
+        chosen_tool is not None
+        and len(chosen_tool["outputs"]) == 1
+        and any(
+            word in goal_text
+            for word in ("maximise", "maximize", "minimise", "minimize", "optimise", "optimize")
+        )
     ):
         return chosen_tool["outputs"][0]
     return None
@@ -635,7 +651,7 @@ def _truncate_value(v: Any, max_array: int = _MAX_ARRAY_DISPLAY) -> Any:
     if isinstance(v, list) and len(v) > max_array:
         head = v[:5]
         tail = v[-5:]
-        return head + [f"... ({len(v)} total) ..."] + tail
+        return [*head, f"... ({len(v)} total) ...", *tail]
     if isinstance(v, dict):
         return {k: _truncate_value(val, max_array) for k, val in v.items()}
     return v
@@ -710,7 +726,7 @@ def _build_ledger_context(
     """
     try:
         records = list(lab.ledger.iter_records())
-    except Exception:  # noqa: BLE001
+    except Exception:
         return "", []
 
     if not records:
@@ -734,9 +750,9 @@ def _build_ledger_context(
     if current_png is not None:
         image_bytes.append(current_png)
         figure_records = [
-            r for r in reversed(records)
-            if _has_png_output(r)
-            and getattr(r, "id", None) != getattr(current_record, "id", None)
+            r
+            for r in reversed(records)
+            if _has_png_output(r) and getattr(r, "id", None) != getattr(current_record, "id", None)
         ]
         for r in figure_records:
             if len(image_bytes) >= _MAX_CONTEXT_IMAGES:
@@ -818,16 +834,19 @@ class ClaudePolicyProvider(PolicyProvider):
             if resp.context_tokens is not None:
                 try:
                     from autolab.events import Event
-                    self._lab.events.publish(Event(
-                        kind="context_tokens",
-                        payload={
-                            "campaign_id": context.campaign_id,
-                            "record_id": context.record.id,
-                            "context_tokens": resp.context_tokens,
-                            "model": resp.model,
-                        },
-                    ))
-                except Exception:  # noqa: BLE001
+
+                    self._lab.events.publish(
+                        Event(
+                            kind="context_tokens",
+                            payload={
+                                "campaign_id": context.campaign_id,
+                                "record_id": context.record.id,
+                                "context_tokens": resp.context_tokens,
+                                "model": resp.model,
+                            },
+                        )
+                    )
+                except Exception:
                     pass
 
         data = _safe_json(resp.text)
@@ -865,10 +884,7 @@ def _describe_decision_context(ctx: DecisionContext) -> str:
     tail = list(ctx.history)[-6:]
     lines.append("recent_history:")
     for r in tail:
-        lines.append(
-            f"  - {r.operation} status={r.record_status} "
-            f"fmode={r.failure_mode}"
-        )
+        lines.append(f"  - {r.operation} status={r.record_status} fmode={r.failure_mode}")
     return "\n".join(lines)
 
 
@@ -1234,9 +1250,9 @@ def _describe_design_context(text: str, lab: Lab | None) -> str:
     lines = ["User goal (verbatim):", text, "", "Tool catalogue:"]
     if lab is not None:
         for decl in lab.tools.list():
-            lines.append(f"  capability: {decl.capability}  resource={decl.resource_kind}")
+            lines.extend(_tool_context_lines(decl, indent="  "))
             for fname, fschema in (decl.inputs or {}).items():
-                parts = [f"    input {fname}: type={fschema.get('type','any')}"]
+                parts = [f"    input {fname}: type={fschema.get('type', 'any')}"]
                 if "enum" in fschema:
                     parts.append(f"enum={fschema['enum']}")
                 if "default" in fschema:
@@ -1256,10 +1272,36 @@ def _describe_design_context(text: str, lab: Lab | None) -> str:
             lines.append("Registered workflows (prefer these over inline definitions):")
             for wf in wf_list:
                 step_ops = [s.operation for s in wf.steps]
-                lines.append(f"  - {wf.name}: steps={step_ops}")
+                lines.append(f"  - {wf.name}: description={wf.description!r} steps={step_ops}")
     else:
         lines.append("  (no Lab context — fall back to minimal stub)")
     return "\n".join(lines)
+
+
+def _short_json(value: Any, limit: int = 1000) -> str:
+    try:
+        text = json.dumps(value, default=str, sort_keys=True)
+    except (TypeError, ValueError):
+        text = str(value)
+    return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+def _tool_context_lines(decl: Any, *, indent: str = "") -> list[str]:
+    raw = getattr(decl, "raw", {}) or {}
+    description = raw.get("description") or raw.get("summary") or ""
+    input_names = list((decl.inputs or {}).keys())
+    output_names = list((decl.outputs or {}).keys())
+    lines = [
+        f"{indent}- {decl.capability} (module {decl.module}) resource={decl.resource_kind} "
+        f"inputs={input_names} outputs={output_names}"
+    ]
+    if description:
+        lines.append(f"{indent}  description: {description}")
+    lines.append(f"{indent}  inputs: {_short_json(decl.inputs or {})}")
+    lines.append(f"{indent}  outputs: {_short_json(decl.outputs or {})}")
+    if getattr(decl, "requires", None):
+        lines.append(f"{indent}  resource_requirements: {_short_json(decl.requires)}")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -1596,7 +1638,7 @@ def _describe_setup_context(text: str, lab: Lab | None) -> str:
         if existing_tools:
             lines.append("Already registered tools:")
             for t in existing_tools:
-                lines.append(f"  - {t.capability} (module {t.module}) resource={t.resource_kind}")
+                lines.extend(_tool_context_lines(t, indent="  "))
     return "\n".join(lines)
 
 
@@ -1703,7 +1745,9 @@ class ResourceDesigner:
             user = _append_refinement(user, previous, instruction)
         resp = self._transport.call(_RESOURCE_SYSTEM, user)
         if self._lab is not None:
-            _persist_claim(self._lab, "designer:resource", "resource_designer", user, resp, loose=True)
+            _persist_claim(
+                self._lab, "designer:resource", "resource_designer", user, resp, loose=True
+            )
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
         questions = [str(q) for q in data.pop("questions", []) or []]
@@ -1728,7 +1772,9 @@ class ResourceDesigner:
             user = _append_refinement(user, previous, instruction)
         resp = await self._transport.acall(_RESOURCE_SYSTEM, user)
         if self._lab is not None:
-            _persist_claim(self._lab, "designer:resource", "resource_designer", user, resp, loose=True)
+            _persist_claim(
+                self._lab, "designer:resource", "resource_designer", user, resp, loose=True
+            )
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
         questions = [str(q) for q in data.pop("questions", []) or []]
@@ -1756,6 +1802,11 @@ def _describe_resource_context(text: str, lab: Lab | None) -> str:
             lines.append("Already registered resources (avoid duplicating names):")
             for r in existing:
                 lines.append(f"  - {r.name} kind={r.kind} caps={r.capabilities}")
+        tools = lab.tools.list()
+        if tools:
+            lines.append("Registered tools this resource may need to support:")
+            for t in tools:
+                lines.extend(_tool_context_lines(t, indent="  "))
     return "\n".join(lines)
 
 
@@ -1886,7 +1937,7 @@ def _describe_tool_context(text: str, lab: Lab | None) -> str:
         if tools:
             lines.append("Already registered tools (avoid duplicating capability names):")
             for t in tools:
-                lines.append(f"  - {t.capability} resource={t.resource_kind}")
+                lines.extend(_tool_context_lines(t, indent="  "))
     return "\n".join(lines)
 
 
@@ -1960,7 +2011,9 @@ class WorkflowDesigner:
             user = _append_refinement(user, previous, instruction)
         resp = self._transport.call(_WORKFLOW_SYSTEM, user)
         if self._lab is not None:
-            _persist_claim(self._lab, "designer:workflow", "workflow_designer", user, resp, loose=True)
+            _persist_claim(
+                self._lab, "designer:workflow", "workflow_designer", user, resp, loose=True
+            )
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
         return WorkflowProposal(workflow=dict(data), notes=notes, raw=resp)
@@ -1977,7 +2030,9 @@ class WorkflowDesigner:
             user = _append_refinement(user, previous, instruction)
         resp = await self._transport.acall(_WORKFLOW_SYSTEM, user)
         if self._lab is not None:
-            _persist_claim(self._lab, "designer:workflow", "workflow_designer", user, resp, loose=True)
+            _persist_claim(
+                self._lab, "designer:workflow", "workflow_designer", user, resp, loose=True
+            )
         data = _safe_json(resp.text) or {}
         notes = str(data.pop("notes", "") or "")
         return WorkflowProposal(workflow=dict(data), notes=notes, raw=resp)
@@ -1997,11 +2052,7 @@ def _describe_workflow_context(text: str, lab: Lab | None) -> str:
         if tools:
             lines.append("Registered tools (available operations):")
             for t in tools:
-                lines.append(
-                    f"  - {t.capability} (resource={t.resource_kind}) "
-                    f"inputs={list(t.inputs.keys()) if t.inputs else []} "
-                    f"outputs={list(t.outputs.keys()) if t.outputs else []}"
-                )
+                lines.extend(_tool_context_lines(t, indent="  "))
         if resources:
             lines.append("Registered resources:")
             for r in resources:

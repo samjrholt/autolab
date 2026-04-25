@@ -60,6 +60,7 @@ Resolving escalations::
 
 from __future__ import annotations
 
+import contextlib
 import importlib.metadata
 import uuid
 from collections.abc import Iterable
@@ -68,7 +69,7 @@ from typing import Any
 
 from autolab.acceptance import GateVerdict
 from autolab.campaign import Campaign, CampaignRunner, CampaignSummary
-from autolab.events import EventBus
+from autolab.events import Event, EventBus
 from autolab.models import (
     Annotation,
     EnvironmentSnapshot,
@@ -331,7 +332,27 @@ class Lab:
     # ------------------------------------------------------------------
 
     async def annotate(self, annotation: Annotation) -> Annotation:
-        return await self.ledger.annotate(annotation)
+        ann = await self.ledger.annotate(annotation)
+        campaign_id = None
+        with contextlib.suppress(Exception):
+            target = self.ledger.get(ann.target_record_id)
+            campaign_id = getattr(target, "campaign_id", None)
+        self.events.publish(
+            Event(
+                kind=f"annotation.{ann.kind}",
+                payload={
+                    "annotation_id": ann.id,
+                    "record_id": ann.target_record_id,
+                    "target_record_id": ann.target_record_id,
+                    "campaign_id": campaign_id,
+                    "kind": ann.kind,
+                    "author": ann.author,
+                    "body": ann.body,
+                    "message": ann.body.get("reason") if isinstance(ann.body, dict) else None,
+                },
+            )
+        )
+        return ann
 
     async def record_intervention(self, intervention: Intervention) -> Record:
         """Persist a human Intervention as its own append-only Record."""

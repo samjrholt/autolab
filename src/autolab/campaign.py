@@ -330,7 +330,7 @@ class CampaignRunner:
         await self._apply_action(step, record, action)
 
     async def _apply_action(self, step: ProposedStep, record: Record, action: Action) -> None:
-        await self.lab.ledger.annotate(
+        await self.lab.annotate(
             Annotation(
                 target_record_id=record.id,
                 kind="claim",
@@ -424,7 +424,7 @@ class CampaignRunner:
             return
 
         # Persist the resolution.
-        await self.lab.ledger.annotate(
+        await self.lab.annotate(
             Annotation(
                 target_record_id=record.id,
                 kind="claim",

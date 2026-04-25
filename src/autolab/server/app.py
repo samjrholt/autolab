@@ -192,7 +192,7 @@ class DesignRequest(BaseModel):
 
 class AnalysisRequest(BaseModel):
     prompt: str
-    campaign_ids: list[str] = Field(default_factory=list)
+    campaign_ids: list[str] | None = None
     limit: int = Field(default=500, ge=1, le=5000)
 
 
@@ -756,9 +756,11 @@ async def status(request: Request) -> dict[str, Any]:
 
 
 def _tool_row(decl: Any) -> dict[str, Any]:
+    raw = getattr(decl, "raw", {}) or {}
     return {
         "name": decl.name,
         "capability": decl.capability,
+        "description": raw.get("description"),
         "version": decl.version,
         "resource_kind": decl.resource_kind,
         "requires": decl.requires,
@@ -936,7 +938,9 @@ async def register_simple_tool(body: dict[str, Any], request: Request) -> dict[s
         _register_dynamic_operation(lab, body)
     except Exception as exc:
         raise HTTPException(400, f"failed to register tool: {exc}") from exc
-    lab.events.publish(Event(kind="capability.registered", payload={"capability": body["capability"]}))
+    lab.events.publish(
+        Event(kind="capability.registered", payload={"capability": body["capability"]})
+    )
     return {"ok": True, "capability": body["capability"]}
 
 
@@ -1168,13 +1172,9 @@ async def start_campaign(campaign_id: str, request: Request) -> dict[str, Any]:
         state = scheduler._get(campaign_id)
     except KeyError as exc:
         raise HTTPException(404, str(exc)) from exc
-    _TERMINAL = {"failed", "completed", "cancelled", "stopped"}
-    if state.status in _TERMINAL:
-        raise HTTPException(
-            409,
-            f"Campaign is in a terminal state ('{state.status}'). "
-            "Create a new campaign to run again.",
-        )
+    terminal = {"failed", "completed", "cancelled", "stopped"}
+    if state.status in terminal:
+        return {"ok": True, "campaign_id": campaign_id, "status": state.status}
     if state.status not in ("queued",):
         # Already running — idempotent, return current state.
         return {"ok": True, "campaign_id": campaign_id, "status": state.status}
@@ -1237,10 +1237,9 @@ async def campaign_report(campaign_id: str, request: Request) -> HTMLResponse:
     for r in all_records:
         if r.record_status == "completed" and r.outputs:
             v = r.outputs.get(obj_key) if obj_key else None
-            if isinstance(v, (int, float)):
-                if best_val is None or v > best_val:
-                    best_val = v
-                    best_record = r
+            if isinstance(v, (int, float)) and (best_val is None or v > best_val):
+                best_val = v
+                best_record = r
     if best_record is None and all_records:
         best_record = next(
             (r for r in reversed(all_records) if r.record_status == "completed"), all_records[-1]
@@ -1280,7 +1279,11 @@ async def campaign_report(campaign_id: str, request: Request) -> HTMLResponse:
     if campaign.acceptance_criteria:
         for output_key, rules in (campaign.acceptance_criteria or {}).items():
             for op, threshold in rules.items():
-                actual = best_record.outputs.get(output_key, "—") if best_record and best_record.outputs else "—"
+                actual = (
+                    best_record.outputs.get(output_key, "—")
+                    if best_record and best_record.outputs
+                    else "—"
+                )
                 ac_rows += (
                     f"<tr><td>{escape(str(output_key))}</td>"
                     f"<td>{escape(str(op))} {escape(str(threshold))}</td>"
@@ -1473,7 +1476,7 @@ async def query_analysis(body: AnalysisRequest, request: Request) -> dict[str, A
     lab = _lab(request)
     scheduler = _scheduler(request)
     all_records = list(lab.ledger.iter_records())
-    if body.campaign_ids is not None:
+    if body.campaign_ids:
         allowed = set(body.campaign_ids)
         all_records = [r for r in all_records if r.campaign_id in allowed]
     all_records = all_records[-body.limit :]
@@ -1711,7 +1714,9 @@ def _analysis_point_series(
                         "x": p["x"],
                         "y": p["y"],
                         "record_id": p["row"].get("record_id"),
-                        "tooltip": _analysis_tooltip(p["row"], spec, p["x"], p["y"], p.get("raw_y")),
+                        "tooltip": _analysis_tooltip(
+                            p["row"], spec, p["x"], p["y"], p.get("raw_y")
+                        ),
                     }
                     for p in points
                 ],
@@ -1811,7 +1816,9 @@ def _first_numeric_field(rows: list[dict[str, Any]]) -> str | None:
     return max(counts, key=counts.get)
 
 
-def _analysis_tooltip(row: dict[str, Any], spec: dict[str, Any], x: Any, y: Any, raw_y: Any = None) -> str:
+def _analysis_tooltip(
+    row: dict[str, Any], spec: dict[str, Any], x: Any, y: Any, raw_y: Any = None
+) -> str:
     base = f"{row.get('campaign_name')} | {row.get('operation')} | {spec['x']}={x}"
     try:
         if raw_y is not None and abs(float(y) - float(raw_y)) > 1e-9:
@@ -2071,7 +2078,9 @@ def _register_dynamic_operation(lab: Lab, spec: dict[str, Any]) -> None:
             if not command:
                 return OperationResult(
                     status="failed",
-                    outputs={"reason": "command-backed capability needs `command` or `command_template`"},
+                    outputs={
+                        "reason": "command-backed capability needs `command` or `command_template`"
+                    },
                 )
             shell_inputs = {
                 "command": command,

@@ -61,7 +61,14 @@ function CitedText({ text, hashIndex, onCiteClick }) {
 export default function ReasoningRail({ events, campaignId, records, collapsed, onToggle, onCiteClick }) {
   const filtered = useMemo(() => {
     if (!events) return [];
-    const list = campaignId ? events.filter((e) => !e.campaign_id || e.campaign_id === campaignId) : events;
+    const list = campaignId
+      ? events.filter((e) => {
+        const payload = e.payload || {};
+        const record = e.record || payload.record || {};
+        const eventCampaign = e.campaign_id || payload.campaign_id || record.campaign_id;
+        return !eventCampaign || eventCampaign === campaignId;
+      })
+      : events;
     return list.slice(-80).reverse();
   }, [events, campaignId]);
 
@@ -122,11 +129,21 @@ export default function ReasoningRail({ events, campaignId, records, collapsed, 
           </div>
         ) : (
           filtered.map((e, i) => {
+            const payload = e.payload || {};
+            const record = e.record || payload.record || {};
+            const body = payload.body || {};
             const rawText =
               e.message ||
+              payload.message ||
               e.summary ||
+              payload.summary ||
               e.reason ||
+              payload.reason ||
+              body.reason ||
+              body.action ||
               e.operation ||
+              payload.operation ||
+              record.operation ||
               (e.record_id ? `record ${e.record_id.slice(4, 12)}…` : "");
             return (
               <div

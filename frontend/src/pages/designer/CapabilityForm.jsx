@@ -36,9 +36,18 @@ function Input(props) {
 }
 
 // Simple list-of-pairs editor for inputs/outputs schema.
-function SchemaEditor({ label, hint, value, onChange }) {
+function SchemaEditor({ label, hint, value, onChange, prefix = "param" }) {
   const pairs = Object.entries(value || {});
-  const add = () => onChange({ ...value, "": "any" });
+  const add = () => {
+    const base = `${prefix}_${pairs.length + 1}`;
+    let key = base;
+    let i = pairs.length + 1;
+    while ((value || {})[key]) {
+      i += 1;
+      key = `${prefix}_${i}`;
+    }
+    onChange({ ...value, [key]: "any" });
+  };
   const update = (oldKey, newKey, newType) => {
     const next = {};
     for (const [k, v] of Object.entries(value || {})) {
@@ -76,6 +85,14 @@ function SchemaEditor({ label, hint, value, onChange }) {
   );
 }
 
+function cleanSchema(schema) {
+  return Object.fromEntries(
+    Object.entries(schema || {})
+      .map(([key, value]) => [key.trim(), String(value || "any").trim() || "any"])
+      .filter(([key]) => key)
+  );
+}
+
 export default function CapabilityForm({ onDone, refresh }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -86,6 +103,7 @@ export default function CapabilityForm({ onDone, refresh }) {
   const [resourceKind, setResourceKind] = useState("");
   const [adapter, setAdapter] = useState("dynamic");
   const [module, setModule] = useState("dynamic_stub");
+  const [commandTemplate, setCommandTemplate] = useState("");
   const [inputs, setInputs] = useState({});
   const [outputs, setOutputs] = useState({});
 
@@ -95,17 +113,29 @@ export default function CapabilityForm({ onDone, refresh }) {
       setError("Capability name must be lowercase letters, digits, and underscores (e.g. shell_command, xrd, sintering).");
       return;
     }
+    if (adapter === "shell_command" && !commandTemplate.trim()) {
+      setError("Command-backed capabilities need a command template, e.g. python simulate.py --x {x}.");
+      return;
+    }
     setBusy(true);
     setError("");
+    const cleanInputs = cleanSchema(inputs);
+    const cleanOutputs = cleanSchema(outputs);
     const body = {
       name: capability.trim(),
       capability: capability.trim(),
       description: description.trim() || null,
       resource_kind: resourceKind.trim() || null,
       adapter: adapter.trim() || "dynamic",
-      module: module.trim() || "dynamic_stub",
-      inputs,
-      outputs,
+      module: adapter === "shell_command" ? `${capability.trim()}.shell.v1` : module.trim() || "dynamic_stub",
+      inputs: cleanInputs,
+      outputs: cleanOutputs,
+      ...(adapter === "shell_command"
+        ? {
+            command_template: commandTemplate.trim(),
+            declared_outputs: Object.keys(cleanOutputs),
+          }
+        : {}),
     };
     try {
       await postJson("/capabilities/register", body);
@@ -150,9 +180,19 @@ export default function CapabilityForm({ onDone, refresh }) {
           <Input value={module} onChange={(e) => setModule(e.target.value)} placeholder="mylab.ops.MyOperation" style={{ fontFamily: "var(--font-mono)" }} />
         </Field>
       ) : null}
+      {adapter === "shell_command" ? (
+        <Field label="Command template *" hint="Use {input_name} placeholders. Example: python simulate.py --material {material} --out loop.png">
+          <Input
+            value={commandTemplate}
+            onChange={(e) => setCommandTemplate(e.target.value)}
+            placeholder="python simulate.py --x {x} --output result.json"
+            style={{ fontFamily: "var(--font-mono)" }}
+          />
+        </Field>
+      ) : null}
 
-      <SchemaEditor label="Inputs" hint="Named parameters this capability accepts." value={inputs} onChange={setInputs} />
-      <SchemaEditor label="Outputs" hint="Named values this capability returns." value={outputs} onChange={setOutputs} />
+      <SchemaEditor label="Inputs" hint="Named parameters this capability accepts." value={inputs} onChange={setInputs} prefix="input" />
+      <SchemaEditor label="Outputs" hint="Named values this capability returns." value={outputs} onChange={setOutputs} prefix="output" />
 
       <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
         <button type="button" onClick={register} disabled={busy || !capability.trim()} className="btn-primary">

@@ -274,7 +274,8 @@ export default function AnalysisPage({ campaigns = [], records = [] }) {
     setError("");
     setMessages((previous) => [...previous, { role: "user", content: query }].slice(-10));
     try {
-      const body = { prompt: query, campaign_ids: campaigns.map((c) => c.campaign_id || c.id).filter(Boolean) };
+      const campaignIds = campaigns.map((c) => c.campaign_id || c.id).filter(Boolean);
+      const body = { prompt: query, ...(campaignIds.length ? { campaign_ids: campaignIds } : {}) };
       const next = await postJson("/analysis/query", body);
       setResult(next);
       setMessages((previous) => [

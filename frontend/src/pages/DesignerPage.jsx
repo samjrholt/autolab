@@ -95,26 +95,32 @@ function DescribeMode({ config, status, refresh, registered, setRegistered }) {
   const [proposal, setProposal] = useState(null);
   const [notes, setNotes] = useState("");
   const [questions, setQuestions] = useState([]);
+  const [refinement, setRefinement] = useState("");
   const [readyToApply, setReadyToApply] = useState(true);
   const [error, setError] = useState("");
   const keyMissing = status && !status.claude_configured;
 
-  const design = async () => {
-    if (!input.trim()) return;
+  const design = async (instruction = "") => {
+    if (!input.trim() && !instruction.trim()) return;
     setBusy(true);
     setError("");
-    setProposal(null);
+    if (!proposal) setProposal(null);
     setNotes("");
     setQuestions([]);
     setReadyToApply(true);
     setRegistered(false);
     try {
-      const result = await postJson(config.designEndpoint, { text: input });
+      const result = await postJson(config.designEndpoint, {
+        text: input,
+        previous: proposal || undefined,
+        instruction: instruction.trim() || undefined,
+      });
       const p = config.extractProposal(result);
       setProposal(p);
       setNotes(result.notes || "");
       setQuestions(result.questions || []);
       setReadyToApply(result.ready_to_apply !== false);
+      setRefinement("");
       if (!p) setError("Claude returned no concrete proposal — try a more specific description.");
     } catch (err) {
       setError(String(err));
@@ -183,7 +189,7 @@ function DescribeMode({ config, status, refresh, registered, setRegistered }) {
         }}
       />
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-        <button type="button" onClick={design} disabled={busy || !input.trim()} className="btn-primary">
+        <button type="button" onClick={() => design()} disabled={busy || !input.trim()} className="btn-primary">
           {busy && !proposal ? "Drafting…" : "Draft with Claude"}
         </button>
         {proposal && !registered ? (
@@ -244,6 +250,58 @@ function DescribeMode({ config, status, refresh, registered, setRegistered }) {
           {questions.map((question) => (
             <div key={question} style={{ marginBottom: 4 }}>{question}</div>
           ))}
+        </div>
+      ) : null}
+
+      {proposal ? (
+        <div
+          style={{
+            marginTop: 12,
+            padding: 10,
+            background: "var(--color-canvas)",
+            border: "1px solid var(--color-line)",
+            borderRadius: 5,
+          }}
+        >
+          <label
+            style={{
+              display: "block",
+              fontSize: 10,
+              textTransform: "uppercase",
+              letterSpacing: 0.07,
+              color: "var(--color-tertiary)",
+              marginBottom: 6,
+            }}
+          >
+            Answer questions or refine the draft
+          </label>
+          <textarea
+            value={refinement}
+            onChange={(e) => setRefinement(e.target.value)}
+            disabled={busy}
+            rows={3}
+            placeholder="Example: use the VM resource, make the final step optimize Hc, and keep the schema names exactly as registered."
+            style={{
+              width: "100%",
+              background: "var(--color-panel)",
+              border: "1px solid var(--color-line-strong)",
+              borderRadius: 5,
+              padding: 9,
+              color: "var(--color-text)",
+              fontSize: 12,
+              resize: "vertical",
+              marginBottom: 8,
+            }}
+          />
+          <button
+            type="button"
+            onClick={() => design(refinement)}
+            disabled={busy || !refinement.trim()}
+            className="btn-secondary"
+            style={{ fontSize: 12 }}
+          >
+            {busy ? "Updating…" : "Update proposal"}
+          </button>
         </div>
       ) : null}
 

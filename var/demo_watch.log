@@ -1,0 +1,7 @@
+[   0s] OPTUNA[running] total=16 {'completed': 16} fom_done=8 best_Hmax=389929.6101504035 | CLAUDE[running] total=14 {'completed': 14} fom_done=7 best_Hmax=397887.35729668743
+[  48s] OPTUNA[running] total=18 {'completed': 18} fom_done=9 best_Hmax=389929.6101504035 | CLAUDE[running] total=16 {'completed': 16} fom_done=8 best_Hmax=397887.35729668743
+[ 103s] OPTUNA[running] total=20 {'running': 1, 'completed': 19} fom_done=9 best_Hmax=389929.6101504035 | CLAUDE[running] total=18 {'completed': 18} fom_done=9 best_Hmax=397887.35729668743
+[ 159s] OPTUNA[running] total=22 {'completed': 22} fom_done=11 best_Hmax=389929.6101504035 | CLAUDE[running] total=20 {'completed': 20} fom_done=10 best_Hmax=397887.35729668743
+[ 203s] OPTUNA[running] total=24 {'completed': 24} fom_done=12 best_Hmax=397887.35729668743 | CLAUDE[running] total=22 {'completed': 22} fom_done=11 best_Hmax=397887.35729668743
+[ 256s] OPTUNA[completed] total=24 {'completed': 24} fom_done=12 best_Hmax=397887.35729668743 | CLAUDE[stopped] total=24 {'completed': 24} fom_done=12 best_Hmax=397887.35729668743
+[ 256s] Both terminal — exiting watcher.

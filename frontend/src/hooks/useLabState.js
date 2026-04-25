@@ -27,6 +27,32 @@ function normaliseCampaign(campaign) {
   };
 }
 
+function normaliseEvent(message) {
+  const payload = message?.payload || {};
+  const record = payload.record || {};
+  return {
+    ...payload,
+    ...message,
+    payload,
+    record,
+    ts: message.timestamp || message.ts,
+    campaign_id: message.campaign_id || payload.campaign_id || record.campaign_id,
+    record_id: message.record_id || payload.record_id || record.id,
+    operation: message.operation || payload.operation || record.operation,
+    status: message.status || payload.status || record.record_status,
+    reason: message.reason || payload.reason || payload.gate?.reason || record.decision?.reason,
+    message:
+      message.message ||
+      payload.message ||
+      payload.reason ||
+      payload.gate?.reason ||
+      record.error ||
+      record.decision?.rationale ||
+      record.decision?.reason ||
+      (record.operation ? `${record.operation} ${record.record_status || ""}`.trim() : ""),
+  };
+}
+
 export function useLabState() {
   const [status, setStatus] = useState(null);
   const [records, setRecords] = useState([]);
@@ -78,9 +104,10 @@ export function useLabState() {
       socket.onmessage = (event) => {
         try {
           const message = JSON.parse(event.data);
-          setEvents((previous) => [...previous.slice(-119), message]);
+          setEvents((previous) => [...previous.slice(-119), normaliseEvent(message)]);
           if (
             message.kind?.startsWith("record.") ||
+            message.kind?.startsWith("annotation.") ||
             message.kind?.startsWith("campaign.") ||
             message.kind?.startsWith("resource.") ||
             message.kind?.startsWith("tool.") ||

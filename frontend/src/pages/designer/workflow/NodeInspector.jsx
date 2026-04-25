@@ -43,6 +43,8 @@ function KVRow({ k, v, onEdit, onRemove }) {
 }
 
 export default function NodeInspector({ node, capability, edgesIntoNode, onChange, onDelete }) {
+  const declaredInputs = useMemo(() => Object.keys(capability?.inputs || {}), [capability]);
+
   if (!node) {
     return (
       <div
@@ -62,8 +64,6 @@ export default function NodeInspector({ node, capability, edgesIntoNode, onChang
   }
 
   const d = node.data || {};
-  const declaredInputs = useMemo(() => Object.keys(capability?.inputs || {}), [capability]);
-
   const patch = (next) => onChange({ ...d, ...next });
   const patchInputs = (next) => patch({ inputs: { ...(d.inputs || {}), ...next } });
 
