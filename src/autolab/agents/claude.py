@@ -1104,7 +1104,20 @@ Reply with a single compact JSON object:
       "name": "...",
       "description": "...",
       "steps": [
-        {"step_id": "s1", "operation": "<tool>", "depends_on": [], "inputs": {...}}
+        {
+          "step_id": "s1",
+          "operation": "<tool>",
+          "depends_on": [],
+          "inputs": {"<static_key>": <value>},
+          "input_mappings": {}
+        },
+        {
+          "step_id": "s2",
+          "operation": "<tool>",
+          "depends_on": ["s1"],
+          "inputs": {},
+          "input_mappings": {"<my_input_key>": "s1.<s1_output_key>"}
+        }
       ]
     }?,
     "questions": [
@@ -1124,6 +1137,20 @@ Rules:
 - Emit ONLY the JSON; no prose.
 - If resources are insufficient for the stated goal, still return a best-effort draft
   and describe the mismatch in `notes`.
+- CRITICAL — workflow inter-step wiring:
+  - Use `input_mappings` (NOT literal template strings) to wire a later step's
+    inputs from an earlier step's outputs.
+  - Format: `"input_mappings": {"my_key": "upstream_step_id.output_key"}`.
+  - The `inputs` field holds ONLY static values known at design time (literals,
+    numbers, strings). Never put `${...}` or any template syntax in `inputs`.
+  - If an input comes from an upstream step's output, wire it via `input_mappings`.
+  - Enumerate `depends_on` for every step that consumes an upstream output.
+- CRITICAL — use only valid input values:
+  - If a tool input has `enum` or `choices`, use ONLY the listed values.
+  - If a tool input shows a `default`, that is also a confirmed-valid example.
+  - If no valid values are listed and none can be inferred, ask in `questions`.
+- Prefer referencing an existing registered workflow by name (set `"workflow":
+  {"name": "<existing_name>"}` with no `steps`) rather than redefining it inline.
 """
 
 
@@ -1207,14 +1234,29 @@ def _describe_design_context(text: str, lab: Lab | None) -> str:
     lines = ["User goal (verbatim):", text, "", "Tool catalogue:"]
     if lab is not None:
         for decl in lab.tools.list():
-            lines.append(
-                f"  - {decl.capability} (module {decl.module}) "
-                f"resource={decl.resource_kind} inputs={list(decl.inputs.keys()) if decl.inputs else []} "
-                f"outputs={list(decl.outputs.keys()) if decl.outputs else []}"
-            )
+            lines.append(f"  capability: {decl.capability}  resource={decl.resource_kind}")
+            for fname, fschema in (decl.inputs or {}).items():
+                parts = [f"    input {fname}: type={fschema.get('type','any')}"]
+                if "enum" in fschema:
+                    parts.append(f"enum={fschema['enum']}")
+                if "default" in fschema:
+                    parts.append(f"default={fschema['default']!r}")
+                if fschema.get("description"):
+                    parts.append(f"desc={fschema['description']!r}")
+                lines.append(" ".join(parts))
+            out_keys = list((decl.outputs or {}).keys())
+            lines.append(f"    outputs: {out_keys}")
+        lines.append("")
         lines.append("Available resources:")
         for r in lab.resources.list():
             lines.append(f"  - {r.name} kind={r.kind} caps={r.capabilities}")
+        wf_list = list(getattr(lab, "_workflows", {}).values())
+        if wf_list:
+            lines.append("")
+            lines.append("Registered workflows (prefer these over inline definitions):")
+            for wf in wf_list:
+                step_ops = [s.operation for s in wf.steps]
+                lines.append(f"  - {wf.name}: steps={step_ops}")
     else:
         lines.append("  (no Lab context — fall back to minimal stub)")
     return "\n".join(lines)

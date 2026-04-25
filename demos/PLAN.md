@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **Current final script:** use `demos/FINAL_VIDEO_SCRIPT_AND_PRODUCTION_PLAN.md` as the recording script and production workflow. It supersedes the older replay-led close below for the final narrated video: the video should close on the compounding trustworthy-data moat, not on `autolab replay`.
+
 **Goal:** Produce a compelling 3-minute Remotion video for the autolab hackathon submission that tells the story of an autonomous lab — Claude beats BO, react() mid-experiment adaptation, and full provenance — with a reproducible demo path backed by clean seed scripts.
 
 **Architecture:** Three parallel workstreams — (1) `demos/` folder with seed scripts that always reproduce the demo state, (2) frontend polish on the 3 key UI moments that will be screen-captured, (3) Remotion video project that combines screen captures + animated overlays into the final submission video.
