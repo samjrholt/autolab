@@ -4,7 +4,7 @@
 
 autolab is a closed-loop, resource-aware framework for autonomous science. A long-running Lab service orchestrates experimental and computational workflows: an agent (Claude Opus 4.7) proposes and reacts, a typed pool of Resources executes, and every step — including the agent's reasoning and every failed or off-target attempt — lands as an append-only hashed Record. Adaptive mid-workflow replanning, live scheduler visualisation, and first-class provenance are core.
 
-> **Status — alpha.** Core framework, FastAPI + WebSocket service, live Campaign Console, Claude Opus 4.7 Planner / PolicyProvider / free-text Campaign Designer, per-operation duration learning, and the Ledger-native MLflow-style query DSL are all in place. 119 tests pass. The framework scope is experimental + computational science; the current hackathon demo path is computational-only. Design contract lives in [docs/design/](docs/design/); task-shaped how-tos in [docs/guides/](docs/guides/).
+> **Status — alpha.** Core framework, FastAPI + WebSocket service, live Campaign Console, Claude Opus 4.7 Planner / PolicyProvider / free-text Campaign Designer, per-operation duration learning, and the Ledger-native MLflow-style query DSL are all in place. The test suite passes. The framework scope is experimental + computational science; the current hackathon demo path is computational-only. Design contract lives in [docs/design/](docs/design/); task-shaped how-tos in [docs/guides/](docs/guides/).
 
 ## What it is
 

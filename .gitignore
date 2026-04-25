@@ -77,10 +77,14 @@ desktop.ini
 # The ledger, cached tool outputs, generated PDF reports, and any
 # Lab state rehydrated at runtime. Test fixtures under tests/ are
 # checked in explicitly; only these runtime paths are ignored.
+.autolab-work/
 /data/
 /ledger/
 /cache/
 /reports/
+/test-results/
+/var/demo_lab/
+/var/*.log
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal

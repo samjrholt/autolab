@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "autolab"
 version = "0.0.1"
-description = "A scientific record with an agent attached — a closed-loop, resource-aware, provenance-first lab framework."
+description = "An autonomous lab with provenance as its foundation."
 readme = "README.md"
 requires-python = ">=3.12"
 license = { file = "LICENSE" }
