@@ -880,11 +880,17 @@ def _describe_decision_context(ctx: DecisionContext) -> str:
         f"inputs: {json.dumps(rec.inputs, default=str)[:400]}",
         f"outputs: {json.dumps(rec.outputs, default=str)[:400]}",
     ]
-    # Short history tail.
-    tail = list(ctx.history)[-6:]
-    lines.append("recent_history:")
+    # Short history tail — include inputs+outputs so react() can iterate on data,
+    # not just on operation names. Without this, Claude re-proposes the same
+    # parameters because it never sees the prior result.
+    tail = list(ctx.history)[-24:]
+    lines.append(f"recent_history (last {len(tail)} records, oldest first):")
     for r in tail:
-        lines.append(f"  - {r.operation} status={r.record_status} fmode={r.failure_mode}")
+        lines.append(
+            f"  - {r.operation} status={r.record_status} fmode={r.failure_mode} "
+            f"inputs={json.dumps(r.inputs, default=str)[:300]} "
+            f"outputs={json.dumps(r.outputs, default=str)[:300]}"
+        )
     return "\n".join(lines)
 
 
@@ -1059,11 +1065,16 @@ def _describe_plan_context(
         lines.append("Available resources:")
         for res in lab.resources.list():
             lines.append(f"  - {res.name} kind={res.kind} caps={res.capabilities}")
-    lines.append("Recent history (tail):")
-    for r in list(ctx.history)[-6:]:
+    obj_key = ctx.objective.key
+    history = list(ctx.history)[-24:]
+    lines.append(f"Recent history (last {len(history)} records, oldest first):")
+    for r in history:
+        score = (r.outputs or {}).get(obj_key) if obj_key else None
+        score_s = f" {obj_key}={score}" if score is not None else ""
         lines.append(
-            f"  - {r.operation} status={r.record_status} "
-            f"inputs={json.dumps(r.inputs, default=str)[:120]}"
+            f"  - {r.operation} status={r.record_status}{score_s} "
+            f"inputs={json.dumps(r.inputs, default=str)[:300]} "
+            f"outputs={json.dumps(r.outputs, default=str)[:300]}"
         )
     return "\n".join(lines)
 

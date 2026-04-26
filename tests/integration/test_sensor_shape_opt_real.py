@@ -57,7 +57,7 @@ def test_sensor_shape_opt_runs_real_ubermag(http_client):
     # Short sweep — still real OOMMF, just fewer field points.
     overrides = default_sensor_shape_overrides(
         material="Ni80Fe20", temperature_K=300.0,
-        sx_nm=40.0, sy_nm=30.0, n_exp=2.0, thickness_nm=5.0,
+        sx_nm=40.0, sy_nm=30.0, thickness_nm=5.0,
         region_L_nm=100.0, mesh_n=40,
         H_max_mT=200.0, n_steps=15,
     )

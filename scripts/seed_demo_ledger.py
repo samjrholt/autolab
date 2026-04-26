@@ -216,13 +216,13 @@ def seed(lab: Lab) -> list[Record]:
         "gradient": 3.8, "Mr_A_per_m": 720e3,
         "H_A_per_m": Ha, "M_A_per_m": Ma,
         "Ms_A_per_m": 8.0e5, "sx_nm": 60.0, "sy_nm": 20.0,
-        "n_exp": 2.0, "thickness_nm": 5.0,
+        "thickness_nm": 5.0,
     }
     if png_a:
         r_a2_out["hysteresis_loop_png"] = png_a
     r_a2 = append(_make_record(lid, "mammos.sensor_shape_fom",
         inputs={"Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11,
-                "sx_nm": 60.0, "sy_nm": 20.0, "n_exp": 2.0, "thickness_nm": 5.0},
+                "sx_nm": 60.0, "sy_nm": 20.0, "thickness_nm": 5.0},
         outputs=r_a2_out,
         created_at=_dt(3.0, 9, 20), parent_ids=[r_a1.id],
         tags=["thread:A", "NOTABLE"],
@@ -251,13 +251,13 @@ def seed(lab: Lab) -> list[Record]:
         "gradient": 0.02, "Mr_A_per_m": 792e3,
         "H_A_per_m": Hb, "M_A_per_m": Mb,
         "Ms_A_per_m": 8.0e5, "sx_nm": 50.0, "sy_nm": 50.0,
-        "n_exp": 2.0, "thickness_nm": 5.0,
+        "thickness_nm": 5.0,
     }
     if png_b:
         r_b2_out["hysteresis_loop_png"] = png_b
     r_b2 = append(_make_record(lid, "mammos.sensor_shape_fom",
         inputs={"Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11,
-                "sx_nm": 50.0, "sy_nm": 50.0, "n_exp": 2.0, "thickness_nm": 5.0},
+                "sx_nm": 50.0, "sy_nm": 50.0, "thickness_nm": 5.0},
         outputs=r_b2_out,
         status="soft_fail",
         created_at=_dt(2.0, 10, 22), parent_ids=[r_b1.id],
@@ -283,13 +283,13 @@ def seed(lab: Lab) -> list[Record]:
         "gradient": 5.8, "Mr_A_per_m": 760e3,
         "H_A_per_m": Hc, "M_A_per_m": Mc,
         "Ms_A_per_m": 8.0e5, "sx_nm": 70.0, "sy_nm": 10.0,
-        "n_exp": 2.0, "thickness_nm": 5.0,
+        "thickness_nm": 5.0,
     }
     if png_c:
         r_c1_out["hysteresis_loop_png"] = png_c
     r_c1 = append(_make_record(lid, "mammos.sensor_shape_fom",
         inputs={"Ms_A_per_m": 8.0e5, "A_J_per_m": 1.3e-11,
-                "sx_nm": 70.0, "sy_nm": 10.0, "n_exp": 2.0, "thickness_nm": 5.0},
+                "sx_nm": 70.0, "sy_nm": 10.0, "thickness_nm": 5.0},
         outputs=r_c1_out,
         created_at=_dt(1.8, 11, 0), parent_ids=[r_b1.id],
         tags=["thread:C", "NOTABLE"],
@@ -320,13 +320,13 @@ def seed(lab: Lab) -> list[Record]:
         "gradient": 9.4, "Mr_A_per_m": 1.71e6,
         "H_A_per_m": Hd, "M_A_per_m": Md,
         "Ms_A_per_m": 1.9e6, "sx_nm": 70.0, "sy_nm": 10.0,
-        "n_exp": 2.0, "thickness_nm": 5.0,
+        "thickness_nm": 5.0,
     }
     if png_d:
         r_d2_out["hysteresis_loop_png"] = png_d
     r_d2 = append(_make_record(lid, "mammos.sensor_shape_fom",
         inputs={"Ms_A_per_m": 1.9e6, "A_J_per_m": 2.8e-11,
-                "sx_nm": 70.0, "sy_nm": 10.0, "n_exp": 2.0, "thickness_nm": 5.0},
+                "sx_nm": 70.0, "sy_nm": 10.0, "thickness_nm": 5.0},
         outputs=r_d2_out,
         created_at=_dt(1.0, 9, 25), parent_ids=[r_d1.id],
         tags=["thread:D", "NOTABLE"],

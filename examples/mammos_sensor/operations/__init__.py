@@ -9,7 +9,7 @@ Two workflow shapes share these Operations:
 
   - :class:`SensorMaterialAtT` — Ms(T) + A(T) from the mammos-spindynamics
     DB with Kuzmin fit.
-  - :class:`SensorShapeFOM` — superellipse mesh + OOMMF hysteresis loop +
+  - :class:`SensorShapeFOM` — elliptical mesh + OOMMF hysteresis loop +
     linear-segment analysis → Hmax (sensor FOM).
 
 - **Full materials chain** (retained for the 6-step multiscale

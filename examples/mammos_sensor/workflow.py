@@ -161,7 +161,7 @@ SENSOR_SHAPE_OPT_WORKFLOW = WorkflowTemplate(
         "Sensor shape optimisation — direct port of the MaMMoS sensor "
         "demonstrator page. Material lookup (Ms(T), A(T) from "
         "mammos-spindynamics + Kuzmin fit) flows into a single sensor "
-        "simulation step (superellipse mesh + OOMMF hysteresis + "
+        "simulation step (elliptical mesh + OOMMF hysteresis + "
         "linear-segment FOM). The shape parameters (sx_nm, sy_nm) are the "
         "optimiser's knobs; Hmax_A_per_m is the objective."
     ),
@@ -191,7 +191,6 @@ def default_sensor_shape_overrides(
     temperature_K: float = 300.0,
     sx_nm: float = 40.0,
     sy_nm: float = 30.0,
-    n_exp: float = 2.0,
     thickness_nm: float = 5.0,
     region_L_nm: float = 100.0,
     mesh_n: int = 40,
@@ -210,7 +209,6 @@ def default_sensor_shape_overrides(
         "fom": {
             "sx_nm": sx_nm,
             "sy_nm": sy_nm,
-            "n_exp": n_exp,
             "thickness_nm": thickness_nm,
             "region_L_nm": region_L_nm,
             "mesh_n": mesh_n,

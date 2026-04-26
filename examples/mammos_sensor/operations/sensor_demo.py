@@ -10,12 +10,11 @@ the autolab framework. Two Operations, no surrogates:
    exchange stiffness ``A(T)`` from the Kuzmin fit. Uses
    ``mammos_spindynamics`` + ``mammos_analysis.kuzmin_properties``.
 
-2. :class:`SensorShapeFOM` — given ``Ms(T)``, ``A(T)``, a superellipse
-   sensor geometry (``sx_nm``, ``sy_nm``, ``n_exp``, ``thickness_nm``),
-   run an OOMMF hysteresis loop via ``ubermag`` /
-   ``oommfc.HysteresisDriver`` and extract the sensor figure of merit
-   ``Hmax`` (width of the linear segment) using
-   ``mammos_analysis.hysteresis.find_linear_segment``.
+2. :class:`SensorShapeFOM` — given ``Ms(T)``, ``A(T)``, an elliptical
+   sensor geometry (``sx_nm``, ``sy_nm``, ``thickness_nm``), run an
+   OOMMF hysteresis loop via ``ubermag`` / ``oommfc.HysteresisDriver``
+   and extract the sensor figure of merit ``Hmax`` (width of the linear
+   segment) using ``mammos_analysis.hysteresis.find_linear_segment``.
 
 These run only inside the separate WSL pixi environment described in
 ``examples/mammos_sensor/README.md``. If the environment is missing the
@@ -107,7 +106,7 @@ class SensorMaterialAtT(Operation):
 class SensorShapeFOM(Operation):
     """One-shot sensor shape evaluation.
 
-    Given Ms(T), A(T) and a superellipse shape, build the mesh, run the
+    Given Ms(T), A(T) and an elliptical shape, build the mesh, run the
     OOMMF hysteresis loop, and extract Hmax (the width of the linear
     segment — the sensor FOM).
     """
@@ -123,9 +122,8 @@ class SensorShapeFOM(Operation):
 
         Ms_A_per_m: float
         A_J_per_m: float
-        sx_nm: float = Field(..., gt=0, description="superellipse semi-axis along x (nm)")
-        sy_nm: float = Field(..., gt=0, description="superellipse semi-axis along y (nm)")
-        n_exp: float = Field(default=2.0, ge=1.5, le=8.0, description="exponent (2 = ellipse)")
+        sx_nm: float = Field(..., gt=0, description="ellipse semi-axis along x (nm)")
+        sy_nm: float = Field(..., gt=0, description="ellipse semi-axis along y (nm)")
         thickness_nm: float = Field(default=5.0, gt=0)
         region_L_nm: float = Field(default=100.0, gt=0, description="cubic mesh region side (nm)")
         mesh_n: int = Field(default=40, ge=10, le=120, description="cells per in-plane side")
@@ -148,7 +146,6 @@ class SensorShapeFOM(Operation):
         Ms_A_per_m: float
         sx_nm: float
         sy_nm: float
-        n_exp: float
         thickness_nm: float
         hysteresis_loop_png: str | None = None  # absolute path to rendered PNG
 
@@ -175,7 +172,6 @@ class SensorShapeFOM(Operation):
             metadata={
                 "sx_nm": parsed.sx_nm,
                 "sy_nm": parsed.sy_nm,
-                "n_exp": parsed.n_exp,
                 "thickness_nm": parsed.thickness_nm,
                 "Hmax_A_per_m": float(result["Hmax_A_per_m"]),
                 "backend": result.get("backend_used", "ubermag"),
@@ -201,7 +197,6 @@ class SensorShapeFOM(Operation):
             "Ms_A_per_m": parsed.Ms_A_per_m,
             "sx_nm": parsed.sx_nm,
             "sy_nm": parsed.sy_nm,
-            "n_exp": parsed.n_exp,
             "thickness_nm": parsed.thickness_nm,
             "hysteresis_loop_png": png_path,
         }
@@ -263,7 +258,6 @@ try:
     A_val  = float(payload["A_J_per_m"])
     sx_m = payload["sx_nm"] * 1e-9
     sy_m = payload["sy_nm"] * 1e-9
-    n_exp = float(payload["n_exp"])
     t_m = payload["thickness_nm"] * 1e-9
     L_m = payload["region_L_nm"] * 1e-9
     nmesh = int(payload["mesh_n"])
@@ -276,7 +270,7 @@ try:
 
     def norm_fn(p):
         x, y, _ = p
-        inside = (abs(x)/sx_m)**n_exp + (abs(y)/sy_m)**n_exp <= 1.0
+        inside = (x/sx_m)**2 + (y/sy_m)**2 <= 1.0
         return Ms_Apm if inside else 0.0
 
     system = mm.System(name="sensor_shape_fom")
