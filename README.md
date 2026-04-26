@@ -2,187 +2,215 @@
 
 **An autonomous lab with provenance as its foundation.**
 
-autolab is a closed-loop, resource-aware framework for autonomous science. A long-running Lab service orchestrates experimental and computational workflows: an agent (Claude Opus 4.7) proposes and reacts, a typed pool of Resources executes, and every step — including the agent's reasoning and every failed or off-target attempt — lands as an append-only hashed Record. Adaptive mid-workflow replanning, live scheduler visualisation, and first-class provenance are core.
+autolab is a closed-loop, resource-aware framework for autonomous science. A long-running Lab service orchestrates experimental and computational workflows. An agent (Claude Opus 4.7) proposes and reacts. A typed pool of Resources executes. **Every step — including the agent's reasoning, every failed attempt, and every interim figure — lands as an append-only hashed Record on the Ledger.** Adaptive mid-workflow replanning, live scheduler visualisation, and first-class provenance are the foundation, not afterthoughts.
 
-> **Status — alpha.** Core framework, FastAPI + WebSocket service, live Campaign Console, Claude Opus 4.7 Planner / PolicyProvider / free-text Campaign Designer, per-operation duration learning, and the Ledger-native MLflow-style query DSL are all in place. The test suite passes. The framework scope is experimental + computational science; the current hackathon demo path is computational-only. Design contract lives in [docs/design/](docs/design/); task-shaped how-tos in [docs/guides/](docs/guides/).
+The framework scope is experimental + computational science. The shipped demo runs computationally — micromagnetic sensor design end-to-end, head-to-head between Claude as Planner and Optuna TPE. Same workflow, same resource, same budget; you watch the ledger fill in real time.
 
-## What it is
+> **Apache-2.0** · public from commit one · alpha. Test suite passes. CI runs lint + tests + frontend build on every push.
 
-Three layers to anyone outside the project:
+---
 
-1. **Brain** — Claude Opus 4.7 as Planner and PolicyProvider, reading records and rendered figures and deciding what to do next.
-2. **Hands** — Capability-named tools and operations that execute scientific work on typed resources. Simulation and computation are the current demo path; the same interfaces are intended to support instrument-backed operations too.
-3. **Ledger** — An append-only, hashed, replayable scientific record with tags and free-text annotations on every entry. The substrate that makes the autonomy trustworthy and the evidence compound across campaigns.
+## Why this is different
 
-Five layers under the hood: Interface, Orchestration, Expertise, Tools (MCP gateway + capability-named registry, Interpretation Operations included), Provenance.
+Four axes of differentiation, called out explicitly because the same words mean different things in adjacent tools:
 
-## Quickstart
+1. **`react()` — adaptive mid-experiment replanning.** A Planner proposes, the Lab executes one Operation, and the policy reads the *just-finished* Record (its outputs, its rendered figure, the trend so far) and chooses one of nine structured Actions: `continue`, `add_step`, `retry_step`, `replan`, `branch`, `accept`, `escalate`, `ask_human`, or `stop`. No public autonomous-lab framework supports clean per-step replanning today; the others run fixed DAGs inside an experiment.
 
-```bash
-pixi install           # set up the Python 3.12 environment
-pixi run frontend-build # build the Console bundle into src/autolab/server/static/
-pixi run serve         # boot uvicorn on :8000 — FastAPI + WebSocket + Console
-```
+2. **Resource-aware, cross-experiment, cross-campaign scheduling with live visualisation.** Operations from different Experiments interleave on shared typed Resources (compute workers, GPU partitions, instruments) while the resource-lane Gantt and plan tree update in real time over a WebSocket.
 
-Open `http://localhost:8000/` for the live Campaign Console — resource-lane
-orchestration, adaptive plan view, live result spotlight, Claude-driven
-free-text Campaign Designer, intervention flow, and provenance drawer. See
-[docs/guides/00-quickstart.md](docs/guides/00-quickstart.md) for the five-minute
-tour.
+3. **Framework-enforced, write-ahead, hashed, append-only provenance, with byte-for-byte replay.** Operations never write Records directly — the orchestrator wraps every call and persists a write-ahead Record *before* the operation runs. Failures are Records (`status: "failed"`) with a `failure_mode`, not exceptions. Every Record carries a SHA-256. `autolab replay` re-canonicalises every Record's payload and reports any drift.
 
-For frontend work, pixi also manages the Node toolchain:
+4. **Opus 4.7 vision driving `react()`.** Any Operation that emits a `*_png` artefact has its rendered figure passed to Opus alongside the structured DecisionContext. The agent reads a hysteresis loop the way a scientist reads it — visually, then numerically — and proposes the next step on that basis.
+
+The sensor demo exercises all four.
+
+---
+
+## Run the demo in three commands
 
 ```bash
-pixi run frontend-install  # install npm dependencies in frontend/
-pixi run frontend-dev      # run the Vite dev server on :5173
-pixi run frontend-build    # emit the production bundle for FastAPI
-```
-
-The repo `.env` is reserved for `ANTHROPIC_API_KEY`. Choose lab setup explicitly
-in the command you run.
-
-For example packs, the preferred workflow is:
-
-```bash
-pixi run clean
-pixi run serve-prod
+pixi install                              # set up Python 3.12 + Node toolchain (pinned)
+cp .env.example .env                      # add ANTHROPIC_API_KEY to enable Claude
+pixi run serve                            # boot the Lab on :8000 (FastAPI + WebSocket + Console)
 ```
 
 In a second terminal:
 
 ```bash
-pixi run apply-bootstrap -- wsl_ssh_demo
+pixi run sensor-demo                      # register the demo against the running Lab
 ```
 
-For the MaMMoS sensor shape-optimisation demo:
+This:
+
+1. POSTs the `sensor_shape_opt` bootstrap (registers `vm-primary` Resource, the two MaMMoS sensor Operations, and the workflow).
+2. Creates two prepared comparison Campaigns (`sensor-shape-opt (optuna)` and `sensor-shape-opt (claude)`) with the same budget, bounds, and objective — `autostart=false` so you start them yourself from the Console.
+
+Open [http://localhost:8000](http://localhost:8000) and start one or both campaigns. If `ANTHROPIC_API_KEY` is unset, autolab boots cleanly and the Optuna campaign works fine — Claude integrations fall back to a deterministic offline stub. Set the key to enable Claude as Planner / PolicyProvider / Campaign Designer.
+
+---
+
+## The shipped demo
+
+`sensor_shape_opt` is a 5-D micromagnetic sensor design problem driven by real OOMMF.
+
+| | |
+|---|---|
+| **Search space** | material ∈ {Fe16N2, Ni80Fe20, Fe2.33Ta0.67Y} × T_K ∈ [100, 650] × sx_nm ∈ [5, 150] × sy_nm ∈ [5, 150] × thickness_nm ∈ [1, 40] |
+| **Objective** | maximise `Hmax_A_per_m` — the half-width of the linear region on the M-H half-sweep along the hard axis (the sensor's linear sensing range) |
+| **Workflow** | `material` step (Ms(T), A(T), K1(T) from Kuzmin fit on `mammos_spindynamics` DB) → `fom` step (build elliptical mesh, run OOMMF `HysteresisDriver`, fit linear segment) |
+| **Resource** | `vm-primary` — a WSL pixi env with `ubermag` + `oommfc` + `mammos-*` |
+| **Budget** | 12 trials per planner |
+
+**Physics quality** (everything below is on by default):
+
+- Magnetocrystalline anisotropy K1(T) wired through from the Kuzmin fit and added as `mm.UniaxialAnisotropy` along the geometric long axis. Soft-magnet limit recovered exactly when K1 ≈ 0.
+- Adaptive z-discretisation: `nz = round(thickness / lex)` where `lex = sqrt(2·A / (µ₀·Ms²))` is computed per trial. Thick films get multi-cell z-resolution instead of a single cell.
+- Odd in-plane cell counts forced (`n_x = n_y = 2k+1`), so the central cell sits on (0, 0) and is always inside any non-degenerate ellipse — no more sub-cell-sized geometry artefacts.
+- Degenerate-sample guard: if `(my_max - my_min) / Ms < 5%`, the trial fails with `failure_mode="process_deviation"` and the planner sees it in history.
+
+**What you should expect to see in the Console:**
+
+- Resource-lane Gantt with both campaigns interleaving on `vm-primary`.
+- Plan tree mutating live as `react()` returns `continue` / `branch` / `replan` decisions.
+- A "spotlight" card for each completed FOM trial with the rendered hysteresis-loop PNG and the linear-segment overlay.
+- Per-trial reasoning: every Claude call is persisted as a hashed `claim` Record / Annotation, so the rationale ("best so far is at high AR thin film, push thickness next") is a citable artefact, not a chat log.
+
+A representative reference run (12 + 12 trials, real OOMMF, fresh ledger): Optuna best ≈ **0.92 T**; Claude best ≈ **1.56 T** at trial 5 with `Fe16N2, sx=150, sy=5, t=40, T=100K`. Claude reaches the optimum in 5 trials by reading prior figures and reasoning about thickness; Optuna explores broadly and lands at ~0.9 T at trial 11. Both are well below the µ₀Ms ≈ 2 T physical ceiling for Fe16N2.
+
+---
+
+## Architecture
+
+Three layers from outside:
+
+1. **Brain** — Claude Opus 4.7 as Planner and PolicyProvider, reading records and rendered figures and deciding what to do next.
+2. **Hands** — Capability-named tools and operations that execute scientific work on typed resources.
+3. **Ledger** — Append-only, hashed, replayable scientific record with tags and free-text annotations on every entry.
+
+Five layers under the hood: Interface, Orchestration, Expertise, Tools (MCP gateway + capability-named registry), Provenance.
+
+**The Lab is a service, not a script.** One Lab instance = one persistent FastAPI + WebSocket service. Resources, Tools, Workflows, and Campaigns are registered against a running Lab. The Ledger belongs to the Lab and accumulates across campaigns.
+
+The two work-bearing abstractions are:
+
+- **Operation** — `async run(inputs) → OperationResult`, declares its capability + resource_kind + module version. Returns `status` + `outputs`. Failures are Records, not exceptions.
+- **Planner** — `plan(history, resources)` for batch proposals + `react(record, plan)` for mid-experiment adaptation. Decisions are routed through an interchangeable **PolicyProvider** (heuristic, LLM, or human).
+
+For the full design contract see [docs/design/autolab-ideas-foundation.md](docs/design/autolab-ideas-foundation.md), [docs/design/GLOSSARY.md](docs/design/GLOSSARY.md), and [CLAUDE.md](CLAUDE.md).
+
+---
+
+## Quickstart for development
 
 ```bash
-pixi run clean
-pixi run serve-prod
-# in a second terminal
-pixi run sensor-demo
+pixi install                              # Python 3.12 + Node 22 toolchain
+pixi run frontend-build                   # build the Console bundle into src/autolab/server/static/
+pixi run serve                            # boot uvicorn on :8000 with --reload
 ```
 
-That runtime pack registers:
+Open [http://localhost:8000](http://localhost:8000) for the live Campaign Console.
 
-- Resource: `vm-primary`
-- Capabilities: `mammos.sensor_material_at_T`, `mammos.sensor_shape_fom`
-- Workflow: `sensor_shape_opt`
-- Two queued comparison campaigns, one Optuna and one Claude/LLM, where each trial runs the full material -> FOM DAG
-
-The Claude campaign requires `ANTHROPIC_API_KEY` on the server. To create
-only one comparison arm:
+For frontend hacking with hot reload:
 
 ```bash
-pixi run sensor-demo -- --planner optuna
-pixi run sensor-demo -- --planner claude
+pixi run frontend-install                 # npm install in frontend/
+pixi run frontend-dev                     # Vite dev server on :5173 against the running Lab
 ```
 
-One-shot startup bootstraps still work when you want a single command:
+CI / quality gates:
 
 ```bash
-AUTOLAB_BOOTSTRAP=wsl_ssh_demo pixi run serve
+pixi run lint                             # ruff check + format check
+pixi run typecheck                        # mypy
+pixi run test                             # pytest unit + integration
+pixi run e2e-headless                     # Playwright against the built Console
+pixi run check                            # all of the above + frontend-build
 ```
 
-Manual verification after applying a pack:
+---
 
-- `GET /debug/bootstrap` should report `bootstrap_mode: "wsl_ssh_demo"` with `bootstrap_error: null`
-- `GET /status` should show the `wsl` resource, `add_two` and `cube` capabilities, the `add_two_then_cube` workflow, and planner `wsl_ssh_add_cube_optuna`
-- In the Console, check `Library -> Resources`, `Library -> Capabilities`, `Library -> Workflows`, and `Campaigns -> New campaign`
+## CLI
 
-For workflow-backed campaigns, `POST /campaigns` accepts an inline
-`workflow`. The planner proposes the tunable step, the CampaignRunner
-executes the full DAG for each trial, upstream outputs are wired through
-`input_mappings`, and the target step's Record is reported back to the
-planner.
+```bash
+pixi run autolab serve                                     # boot the service
+pixi run autolab apply-bootstrap sensor_shape_opt          # apply a named pack to a running Lab
+pixi run autolab status                                    # pretty-print /status
+pixi run autolab verify --root .autolab-runs/default       # rehash every Record, report drift
+pixi run autolab replay --root .autolab-runs/default --campaign <id>
+pixi run autolab export --root .autolab-runs/default --fmt ro-crate > campaign.json
+```
 
-### HTTP surface (partial)
+`autolab replay` is the credibility anchor — for every Record in a campaign it re-canonicalises the payload, recomputes the SHA-256, and reports any drift from the stored checksum.
+
+---
+
+## HTTP surface
+
+The Console talks to the same endpoints any client does. Selected highlights (full list at runtime via `GET /openapi.json`):
 
 | Method | Path | Purpose |
 |---|---|---|
 | `GET`  | `/status` | Lab overview: resources, tools, campaigns, record counts, ETAs. |
-| `GET`  | `/debug/bootstrap` | Show the active bootstrap mode and any bootstrap error. |
-| `POST` | `/bootstraps/apply` | Apply a named example/bootstrap pack to a running Lab. |
-| `POST` | `/resources` | Register a Resource (body = JSON). |
-| `POST` | `/tools/register-yaml` | Register a capability from a JSON/YAML declaration. |
-| `POST` | `/workflows` | Register a reusable `WorkflowTemplate`. |
-| `POST` | `/campaigns` | Submit a Campaign (planner picked by name). |
+| `POST` | `/bootstraps/apply` | Apply a named example pack to a running Lab. |
+| `POST` | `/resources` · `/tools/register-yaml` · `/workflows` · `/campaigns` | Register entities. |
 | `POST` | `/campaigns/design` | Claude turns free text into a draft Campaign + workflow. |
+| `POST` | `/campaigns/{id}/intervene` · `/pause` · `/resume` · `/cancel` | Human controls — every intervention is a hashed Record. |
 | `GET`  | `/ledger?filter=…` | Query the Ledger with an MLflow-style DSL. |
-| `GET`  | `/estimate/eta?campaign_id=…` | Projected finish time from the duration model. |
-| `POST` | `/records/{id}/annotate` | Append a hashed note to any Record. |
-| `GET`  | `/verify` | Recompute every Record's SHA-256 and flag mismatches. |
+| `GET`  | `/estimate/eta?campaign_id=…` | Projected finish time from the per-operation duration model. |
+| `POST` | `/records/{id}/annotate` · `/extract` | Append notes; let Claude turn notes into structured Claims. |
+| `GET`  | `/verify` | Recompute every Record's SHA-256, flag mismatches. |
+| `GET`  | `/export/ro-crate` · `/export/prov` | RO-Crate 1.1 / W3C PROV-O exports. |
+| `GET`  | `/samples/{id}/history` | Sample lineage + every Record that touched it. |
 | `WS`   | `/events` | Live event stream — records, campaigns, resources, escalations. |
-| `POST` | `/workflows/{name}/run` | Execute a registered WorkflowTemplate directly. |
-| `POST` | `/records/{id}/extract` | Run `annotation_extract` — Claude reads notes, returns structured Claim. |
-| `GET`  | `/samples/{id}/history` | Sample lineage + every Record that touched a Sample. |
-| `GET`  | `/export/ro-crate` | RO-Crate 1.1 JSON-LD export (ELN Consortium interop). |
-| `GET`  | `/export/prov` | W3C PROV-O shaped JSON export. |
-| `POST` | `/lab/setup` | Claude proposes resources + operations from a plain-language lab description. |
-| `POST` | `/lab/setup/apply` | Register the reviewed setup proposal. |
-| `POST` | `/resources/design` | Claude proposes a single Resource from a description. |
-| `POST` | `/tools/design` | Claude proposes a single Tool declaration from a description. |
-| `POST` | `/workflows/design` | Claude proposes a WorkflowTemplate from a description. |
-| `POST` | `/campaigns/{id}/pause` | Pause a running Campaign. |
-| `POST` | `/campaigns/{id}/resume` | Resume a paused Campaign. |
-| `POST` | `/campaigns/{id}/cancel` | Cancel a Campaign. |
-| `POST` | `/campaigns/{id}/intervene` | Record a human intervention as a hashed Record. |
 
-### CLI
+---
 
-```bash
-pixi run autolab serve                             # boot the service
-pixi run autolab apply-bootstrap wsl_ssh_demo     # apply a named pack to a running Lab
-pixi run autolab status                            # pretty-print /status
-pixi run autolab verify --root .autolab-runs/...   # rehash every Record
-pixi run autolab replay --root .autolab-runs/... --campaign <id>
-pixi run autolab export --root .autolab-runs/... --fmt ro-crate > campaign.json
-```
+## Bootstraps (`AUTOLAB_BOOTSTRAP`)
 
-`autolab replay` is the credibility anchor — for every Record in a
-campaign it re-canonicalises the payload, recomputes the SHA-256, and
-reports any drift from the stored checksum.
-
-### Bootstraps (`AUTOLAB_BOOTSTRAP`)
+Apply at boot via env var, or against a running Lab via `pixi run autolab apply-bootstrap <mode>`.
 
 | Mode | Registers |
 |---|---|
-| `demo_quadratic` (default) | Trivial stub Operation + `pc-1` computer Resource. Good for clicking around with no external deps. |
-| `superellipse` | `superellipse_hysteresis` capability + `pc-1` computer Resource. Real-physics surrogate. |
-| `mammos` | All 6 MaMMoS Operations + `mammos_sensor` WorkflowTemplate + `vm-primary` VM Resource. |
-| `all` | Both `superellipse` and `mammos` bundles. |
-| `shell_command` | `shell_command` capability + `local-worker` Resource. Full round-trip with a local subprocess backend. |
-| `wsl_ssh_demo` | `wsl` SSH resource + `add_two`, `cube`, `add_two_then_cube`, and the `wsl_ssh_add_cube_optuna` planner. |
-| `none` | Empty Lab — register resources/tools via REST. |
+| `none` (default) | Empty Lab — register everything via REST. |
+| `sensor_shape_opt` | **The shipped demo.** `vm-primary` VM Resource + `mammos.sensor_material_at_T` and `mammos.sensor_shape_fom` Operations + `sensor_shape_opt` workflow. |
+| `mammos` | The full 6-step MaMMoS multiscale chain (composition → relax → 0K intrinsics → finite-T → mesh → hysteresis → FOM). |
+| `superellipse` | Older single-stage sensor example with a closed-form surrogate fallback. |
+| `all` | `superellipse` + `mammos` together. |
+| `demo_quadratic` | Trivial stub Operation for clicking around with no external deps. |
+| `shell_command` | `shell_command` capability + `local-worker` Resource — full round-trip with a local subprocess backend. |
+| `wsl_ssh_demo` | `wsl` SSH resource + `add_two`, `cube`, `add_two_then_cube` workflow + `wsl_ssh_add_cube_optuna` planner. |
 | `module:fn` | Dotted path to a user-supplied `bootstrap(lab)` function. |
 
-### Still planned
-
-- Re-execution-style replay (running cached Operation outputs), not just checksum replay.
-- LabIMotion-style Segments (typed metadata blocks attachable to Records).
+---
 
 ## Repo layout
 
 | Path | What it is |
 |---|---|
-| [`src/autolab/`](src/autolab/) | The Python package. |
-| [`tests/`](tests/) | pytest unit + integration. |
-| [`docs/design/`](docs/design/) | Design synthesis, glossary, scenarios, thesis. |
-| [`docs/architecture/`](docs/architecture/) | Concrete architecture docs (as written). |
-| [`docs/examples/`](docs/examples/) | Documented example workflows. |
-| [`frontend/`](frontend/) | React + Vite Campaign Console source, built via pixi tasks. |
-| [`CLAUDE.md`](CLAUDE.md) | Guidance for Claude Code working in this repo. |
-| [`pyproject.toml`](pyproject.toml) | Python package metadata + lint / type / test config. |
-| [`pixi.toml`](pixi.toml) | Environment + task manifest. |
+| [`src/autolab/`](src/autolab/) | The Python package — Lab, Orchestrator, Ledger, Planners, agents, server. |
+| [`frontend/`](frontend/) | React + Vite Campaign Console source; built bundle ships in `src/autolab/server/static/`. |
+| [`examples/`](examples/) | Registered demo packs. The headline is `mammos_sensor/`. |
+| [`tests/`](tests/) | pytest unit + integration suites. |
+| [`docs/design/`](docs/design/) | Foundation, glossary, scenarios, thesis — the design contract. |
+| [`docs/architecture/`](docs/architecture/) | Concrete architecture documents. |
+| [`docs/guides/`](docs/guides/) | Five-minute task-shaped how-tos: quickstart, adding a resource, adding an operation, etc. |
+| [`scripts/`](scripts/) | Helper scripts that POST against a running Lab (`register_sensor_demo.py`, `seed_demo_ledger.py`, `clean_local_state.py`). |
+| [`pixi.toml`](pixi.toml) | Environment + task manifest — every CLI entry point above is a pixi task. |
+| [`pyproject.toml`](pyproject.toml) | Python package metadata + lint/type/test config. |
+| [`CLAUDE.md`](CLAUDE.md) | Current-state design contract, invariants, locked decisions. |
+
+---
 
 ## Design contract
 
-Before changing framework code, read (in this order):
+Before changing framework code, read in this order:
 
-1. [docs/design/autolab-ideas-foundation.md](docs/design/autolab-ideas-foundation.md) — the load-bearing design synthesis.
-2. [docs/design/GLOSSARY.md](docs/design/GLOSSARY.md) — canonical terms.
+1. [docs/design/autolab-ideas-foundation.md](docs/design/autolab-ideas-foundation.md) — the load-bearing design synthesis. §2 (the five moats), §3 (Operation / Planner), §6 (provenance), §21 (locked decisions).
+2. [docs/design/GLOSSARY.md](docs/design/GLOSSARY.md) — canonical terms. Use these exactly; do not coin synonyms.
 3. [docs/design/scenarios.md](docs/design/scenarios.md) — real scientist-workflow pressure tests.
-4. [CLAUDE.md](CLAUDE.md) — current-state design contract, invariants, locked decisions.
+4. [CLAUDE.md](CLAUDE.md) — current-state design contract, invariants, locked decisions, ambition level.
+
+---
 
 ## Licence
 

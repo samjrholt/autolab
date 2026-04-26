@@ -7,6 +7,7 @@ Tests the plan/react cycle without running a real Campaign:
   - plan() reads add_three.result into Optuna (tell)
   - budget exhaustion stops proposals
 """
+
 from __future__ import annotations
 
 import sys
@@ -18,10 +19,10 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from examples.add_demo.planner import WorkflowChainOptimizer
+
 from autolab.models import ActionType, Objective, ProposedStep, Record
 from autolab.planners.base import DecisionContext, PlanContext
-
-from examples.add_demo.planner import WorkflowChainOptimizer
 
 
 def _make_context(history=None, remaining_budget=20):
@@ -52,6 +53,7 @@ def _make_record(operation, status, outputs=None, decision=None):
 
 def _make_decision_ctx(record, remaining_budget=10):
     from autolab.acceptance import GateVerdict
+
     return DecisionContext(
         campaign_id="camp-test",
         record=record,
@@ -65,6 +67,7 @@ def _make_decision_ctx(record, remaining_budget=10):
 # ---------------------------------------------------------------------------
 # plan()
 # ---------------------------------------------------------------------------
+
 
 class TestWorkflowChainOptimizerPlan:
     def test_plan_proposes_add_two(self):
@@ -109,13 +112,15 @@ class TestWorkflowChainOptimizerPlan:
 # react()
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowChainOptimizerReact:
     def test_react_after_add_two_returns_add_step(self):
         planner = WorkflowChainOptimizer()
         planner.plan(_make_context())  # register trial 0 in _pending
 
         rec = _make_record(
-            "add_two", "completed",
+            "add_two",
+            "completed",
             outputs={"result": 7.0},
             decision={"planner": "add_demo_optuna", "trial_number": 0},
         )
@@ -131,18 +136,18 @@ class TestWorkflowChainOptimizerReact:
         """add_three must receive precisely what add_two returned."""
         planner = WorkflowChainOptimizer()
         planner.plan(_make_context())
-        rec = _make_record("add_two", "completed",
-                           outputs={"result": result_value},
-                           decision={"trial_number": 0})
+        rec = _make_record(
+            "add_two", "completed", outputs={"result": result_value}, decision={"trial_number": 0}
+        )
         action = planner.react(_make_decision_ctx(rec))
         assert action.payload["step"].inputs["x"] == result_value
 
     def test_react_after_add_three_returns_continue(self):
         planner = WorkflowChainOptimizer()
         planner.plan(_make_context())
-        rec = _make_record("add_three", "completed",
-                           outputs={"result": 10.0},
-                           decision={"trial_number": 0})
+        rec = _make_record(
+            "add_three", "completed", outputs={"result": 10.0}, decision={"trial_number": 0}
+        )
         action = planner.react(_make_decision_ctx(rec))
         assert action.type is ActionType.CONTINUE
 
@@ -159,9 +164,9 @@ class TestWorkflowChainOptimizerReact:
         props = planner.plan(_make_context())
         tn = props[0].decision["trial_number"]
 
-        rec = _make_record("add_two", "completed",
-                           outputs={"result": 5.0},
-                           decision={"trial_number": tn})
+        rec = _make_record(
+            "add_two", "completed", outputs={"result": 5.0}, decision={"trial_number": tn}
+        )
         action = planner.react(_make_decision_ctx(rec))
         assert action.payload["step"].decision["trial_number"] == tn
 
@@ -170,15 +175,19 @@ class TestWorkflowChainOptimizerReact:
 # Optuna tell() integration
 # ---------------------------------------------------------------------------
 
+
 class TestWorkflowChainOptimizerTell:
     def test_completed_add_three_told_to_optuna(self):
         planner = WorkflowChainOptimizer()
         proposals = planner.plan(_make_context())
         tn = proposals[0].decision["trial_number"]
 
-        rec = _make_record("add_three", "completed",
-                           outputs={"result": 10.0},
-                           decision={"planner": "add_demo_optuna", "trial_number": tn})
+        rec = _make_record(
+            "add_three",
+            "completed",
+            outputs={"result": 10.0},
+            decision={"planner": "add_demo_optuna", "trial_number": tn},
+        )
         planner.plan(_make_context(history=[rec]))
         assert tn in planner._told
 
@@ -187,9 +196,9 @@ class TestWorkflowChainOptimizerTell:
         props = planner.plan(_make_context())
         tn = props[0].decision["trial_number"]
 
-        rec = _make_record("add_three", "completed",
-                           outputs={"result": 10.0},
-                           decision={"trial_number": tn})
+        rec = _make_record(
+            "add_three", "completed", outputs={"result": 10.0}, decision={"trial_number": tn}
+        )
         planner.plan(_make_context(history=[rec]))
         count = len(planner._told)
         planner.plan(_make_context(history=[rec, rec]))  # same record twice
@@ -202,9 +211,9 @@ class TestWorkflowChainOptimizerTell:
         tn = props[0].decision["trial_number"]
 
         # Only an add_two record — should NOT be told.
-        rec = _make_record("add_two", "completed",
-                           outputs={"result": 7.0},
-                           decision={"trial_number": tn})
+        rec = _make_record(
+            "add_two", "completed", outputs={"result": 7.0}, decision={"trial_number": tn}
+        )
         planner.plan(_make_context(history=[rec]))
         assert tn not in planner._told
 
@@ -213,28 +222,32 @@ class TestWorkflowChainOptimizerTell:
 # Bootstrap integration (uses pytest tmp_path to avoid Windows lock issues)
 # ---------------------------------------------------------------------------
 
+
 class TestBootstrapRegisters:
     def test_bootstrap_registers_planner(self, tmp_path):
         """Bootstrap must register 'add_demo_optuna' in the global registry."""
+        from examples.add_demo.bootstrap import bootstrap
+
         from autolab.lab import Lab
         from autolab.planners.registry import list_planners
-        from examples.add_demo.bootstrap import bootstrap
 
         lab = Lab(root=tmp_path / "lab")
         bootstrap(lab)
         assert "add_demo_optuna" in list_planners()
 
     def test_bootstrap_registers_resource(self, tmp_path):
-        from autolab.lab import Lab
         from examples.add_demo.bootstrap import bootstrap
+
+        from autolab.lab import Lab
 
         lab = Lab(root=tmp_path / "lab")
         bootstrap(lab)
         assert any(r.name == "wsl-local" for r in lab.resources.list())
 
     def test_bootstrap_registers_capabilities(self, tmp_path):
-        from autolab.lab import Lab
         from examples.add_demo.bootstrap import bootstrap
+
+        from autolab.lab import Lab
 
         lab = Lab(root=tmp_path / "lab")
         bootstrap(lab)
@@ -242,8 +255,9 @@ class TestBootstrapRegisters:
         assert lab.tools.has("add_three")
 
     def test_bootstrap_registers_workflow(self, tmp_path):
-        from autolab.lab import Lab
         from examples.add_demo.bootstrap import bootstrap
+
+        from autolab.lab import Lab
 
         lab = Lab(root=tmp_path / "lab")
         bootstrap(lab)
@@ -255,8 +269,9 @@ class TestBootstrapRegisters:
 
     def test_bootstrap_workflow_has_input_mapping(self, tmp_path):
         """add_three step must wire add_two.result → x."""
-        from autolab.lab import Lab
         from examples.add_demo.bootstrap import bootstrap
+
+        from autolab.lab import Lab
 
         lab = Lab(root=tmp_path / "lab")
         bootstrap(lab)
@@ -266,8 +281,9 @@ class TestBootstrapRegisters:
 
     def test_bootstrap_idempotent(self, tmp_path):
         """Calling bootstrap twice must not raise or duplicate registrations."""
-        from autolab.lab import Lab
         from examples.add_demo.bootstrap import bootstrap
+
+        from autolab.lab import Lab
 
         lab = Lab(root=tmp_path / "lab")
         bootstrap(lab)

@@ -29,7 +29,6 @@ from pydantic import BaseModel, Field
 from autolab.models import OperationResult
 from autolab.operations.base import Operation, OperationContext
 
-
 _SYSTEM = """You are an Interpretation Operation inside an autonomous science lab.
 A scientist attached free-text annotations to a lab Record. Extract structured facts.
 
@@ -62,7 +61,9 @@ class AnnotationExtract(Operation):
 
     class Inputs(BaseModel):
         target_record_id: str = Field(..., description="Record whose annotations to read")
-        extra_hints: str | None = Field(default=None, description="Optional extra guidance for the LLM")
+        extra_hints: str | None = Field(
+            default=None, description="Optional extra guidance for the LLM"
+        )
 
     class Outputs(BaseModel):
         tags: list[str] = Field(default_factory=list)
@@ -112,7 +113,9 @@ class AnnotationExtract(Operation):
         if target and target.outputs:
             header += f"\nOutputs (abridged): {json.dumps(target.outputs)[:400]}"
         hint = parsed.extra_hints or ""
-        user = header + "\n\nAnnotations:\n" + "\n".join(notes) + (f"\n\nHint: {hint}" if hint else "")
+        user = (
+            header + "\n\nAnnotations:\n" + "\n".join(notes) + (f"\n\nHint: {hint}" if hint else "")
+        )
 
         transport: ClaudeTransport = (ctx.metadata or {}).get("claude") or ClaudeTransport()
         resp = transport.call(_SYSTEM, user)

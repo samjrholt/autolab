@@ -18,7 +18,13 @@ class _FakeClaudeTransport:
         self.text = text
         self.user_prompt = ""
 
-    def call(self, system: str, user: str) -> ClaudeResponse:
+    def call(
+        self,
+        system: str,
+        user: str,
+        *,
+        images: list[bytes] | None = None,
+    ) -> ClaudeResponse:
         self.user_prompt = user
         return ClaudeResponse(
             text=self.text,
@@ -38,6 +44,7 @@ class TestBuiltinRegistry:
         # "bo" is now an alias for Optuna (GP sampler) — we removed the
         # hand-rolled GP in favour of Optuna's built-in samplers.
         import warnings
+
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")  # suppress ExperimentalWarning for GPSampler
             planner = build(

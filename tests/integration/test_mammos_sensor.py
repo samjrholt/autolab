@@ -12,17 +12,16 @@ import os
 from pathlib import Path
 
 import pytest
-
-from autolab import Lab, Resource
-from autolab.dataset import DatasetBuilder
-from autolab.orchestrator import CampaignRun
-
 from examples.mammos_sensor.operations import ALL_OPERATIONS
 from examples.mammos_sensor.vm import VMConfig, VMExecutor, probe_vm
 from examples.mammos_sensor.workflow import (
     MAMMOS_SENSOR_WORKFLOW,
     default_input_overrides,
 )
+
+from autolab import Lab, Resource
+from autolab.dataset import DatasetBuilder
+from autolab.orchestrator import CampaignRun
 
 
 @pytest.fixture

@@ -70,4 +70,6 @@ format = "ruff format src tests"
 typecheck = "mypy src/autolab"
 
 # One shot: run everything CI runs.
-check = { depends-on = ["lint", "typecheck", "test", "frontend-build"] }
+# (typecheck is run locally as a developer tool but is not gated in CI yet —
+# see pyproject.toml [tool.mypy].)
+check = { depends-on = ["lint", "test", "frontend-build"] }

@@ -39,8 +39,6 @@ from datetime import UTC, datetime, timedelta
 from statistics import median
 from typing import TYPE_CHECKING
 
-from autolab.models import Record
-
 if TYPE_CHECKING:
     from autolab.lab import Lab
     from autolab.tools.registry import ToolRegistry

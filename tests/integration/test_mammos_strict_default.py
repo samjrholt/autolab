@@ -22,9 +22,9 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from examples.mammos_sensor.operations import ALL_OPERATIONS  # noqa: E402
-from examples.mammos_sensor.vm import ScriptError, VMConfig, VMExecutor  # noqa: E402
-from examples.mammos_sensor.workflow import (  # noqa: E402
+from examples.mammos_sensor.operations import ALL_OPERATIONS
+from examples.mammos_sensor.vm import ScriptError, VMConfig, VMExecutor
+from examples.mammos_sensor.workflow import (
     MAMMOS_SENSOR_WORKFLOW,
     default_input_overrides,
 )
@@ -46,7 +46,7 @@ class _AlwaysScriptError(VMExecutor):
         cfg.force_surrogate = True
         super().__init__(cfg)
 
-    def run_python(self, *_a, **_kw):  # noqa: D401
+    def run_python(self, *_a, **_kw):
         raise ScriptError(
             "real backend not installed (synthetic)",
             returncode=2,
@@ -131,6 +131,7 @@ def test_server_default_boot_is_empty(tmp_path, monkeypatch):
     monkeypatch.delenv("AUTOLAB_BOOTSTRAP", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     from fastapi.testclient import TestClient
+
     from autolab.server.app import app
 
     with TestClient(app) as client:
@@ -152,6 +153,7 @@ def test_mammos_bootstrap_apply_registers_sensor_workflow(tmp_path, monkeypatch)
     monkeypatch.delenv("AUTOLAB_BOOTSTRAP", raising=False)
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     from fastapi.testclient import TestClient
+
     from autolab.server.app import app
 
     with TestClient(app) as client:

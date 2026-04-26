@@ -423,7 +423,7 @@ packages:
 - pypi: ./
   name: autolab
   version: 0.0.1
-  sha256: d3ad3410d1411817e5f257c4f871e1782f649147815c43f55ee53c46d25f28ef
+  sha256: 6023f83cd4b8bf34c5a550a24e2fa165d0850b9243947038cbad744dac1def3e
   requires_dist:
   - fastapi>=0.115
   - uvicorn[standard]>=0.30

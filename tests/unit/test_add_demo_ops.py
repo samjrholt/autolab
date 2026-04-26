@@ -5,6 +5,7 @@ Tests every code path in AddTwo and AddThree:
   - bad / missing input returns status="failed" (not an exception)
   - chain: add_two output feeds add_three correctly
 """
+
 from __future__ import annotations
 
 import sys
@@ -19,10 +20,10 @@ if str(ROOT) not in sys.path:
 
 from examples.add_demo.operations import AddThree, AddTwo
 
-
 # ---------------------------------------------------------------------------
 # AddTwo
 # ---------------------------------------------------------------------------
+
 
 class TestAddTwo:
     @pytest.mark.asyncio
@@ -84,6 +85,7 @@ class TestAddTwo:
 # AddThree
 # ---------------------------------------------------------------------------
 
+
 class TestAddThree:
     @pytest.mark.asyncio
     async def test_basic(self):
@@ -111,6 +113,7 @@ class TestAddThree:
 # ---------------------------------------------------------------------------
 # Chain: add_two → add_three = x + 5
 # ---------------------------------------------------------------------------
+
 
 class TestChain:
     @pytest.mark.asyncio

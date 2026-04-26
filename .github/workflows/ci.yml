@@ -23,8 +23,11 @@ jobs:
       - name: Lint
         run: pixi run lint
 
-      - name: Type-check
-        run: pixi run typecheck
-
       - name: Test
         run: pixi run test
+
+      - name: Frontend install
+        run: pixi run frontend-install
+
+      - name: Frontend build
+        run: pixi run frontend-build

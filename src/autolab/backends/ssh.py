@@ -26,7 +26,6 @@ from typing import Any
 
 from autolab.backends.base import RemoteCommandResult
 
-
 try:  # pragma: no cover — optional dep
     import asyncssh  # type: ignore
 
@@ -82,19 +81,17 @@ class SshExecBackend:
         conn = self._require_connection()
         parent = remote_path.rsplit("/", 1)[0]
         await conn.run(f"mkdir -p {shlex.quote(parent)}", check=True)
-        async with conn.start_sftp_client() as sftp:
-            async with sftp.open(remote_path, "w") as f:
-                await f.write(content)
+        async with conn.start_sftp_client() as sftp, sftp.open(remote_path, "w") as f:
+            await f.write(content)
 
     async def get_text(self, remote_path: str) -> str:
         conn = self._require_connection()
         check = await conn.run(f"test -f {shlex.quote(remote_path)}", check=False)
         if check.exit_status != 0:
             return ""
-        async with conn.start_sftp_client() as sftp:
-            async with sftp.open(remote_path, "r") as f:
-                content = await f.read()
-                return content if isinstance(content, str) else content.decode("utf-8")
+        async with conn.start_sftp_client() as sftp, sftp.open(remote_path, "r") as f:
+            content = await f.read()
+            return content if isinstance(content, str) else content.decode("utf-8")
 
     async def get_file(
         self,

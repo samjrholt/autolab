@@ -83,8 +83,9 @@ desktop.ini
 /cache/
 /reports/
 /test-results/
-/var/demo_lab/
-/var/*.log
+# All Lab state under var/ is runtime. Ledgers (active + archived
+# debugging snapshots), logs, chat-kernel state, generated PNGs.
+/var/
 *.sqlite
 *.sqlite-journal
 *.sqlite-wal
@@ -92,8 +93,23 @@ desktop.ini
 *.db
 *.db-journal
 
-# Brainstorm scratch (visual companion)
+# ---- Internal / not-public-facing ----
+# Personal Claude Code state.
+.claude/
+# Brainstorm scratch (visual companion).
 .superpowers/
+# Internal demo planning + video scripts. Submitted repo ships the demo
+# pack as code; the planning docs are kept out of tree.
+/demos/
+# Tooling-internal design specs (separate from the public docs/design/
+# foundation, glossary, scenarios, and architecture docs).
+/docs/superpowers/
+
+# ---- Debug dumps ----
+# One-off scratch dumps written from the project root during debugging.
+# Keep ledger artefacts under var/ (already covered above).
+/ledger_dump*.json
+/*_dump.json
 
 # Playwright run output
 frontend/test-results/

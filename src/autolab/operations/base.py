@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import inspect
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import Any, ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -67,7 +67,7 @@ class Operation(ABC):
     resource_kind: str | None = None
 
     #: Capability requirements on the matched Resource instance.
-    requires: dict[str, Any] = {}
+    requires: ClassVar[dict[str, Any]] = {}
 
     #: True if this Operation mints a new Sample.
     produces_sample: bool = False
@@ -106,7 +106,9 @@ class Operation(ABC):
     # ------------------------------------------------------------------
 
     @classmethod
-    async def call(cls, inputs: dict[str, Any], context: OperationContext | None = None) -> OperationResult:
+    async def call(
+        cls, inputs: dict[str, Any], context: OperationContext | None = None
+    ) -> OperationResult:
         instance = cls()
         # Support both run(inputs) and run(inputs, context) signatures.
         sig = inspect.signature(instance.run)

@@ -8,6 +8,7 @@ Usage:
 The --bootstrap value is injected as AUTOLAB_BOOTSTRAP before uvicorn
 starts, avoiding the need for shell env var gymnastics across platforms.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -68,6 +69,7 @@ def main() -> None:
     _wait_for_socket_available(args.host, args.port, timeout=10)
 
     import uvicorn  # type: ignore[import]
+
     uvicorn.run(
         "autolab.server.app:app",
         host=args.host,

@@ -38,10 +38,11 @@ import hashlib
 import json
 import os
 import re
+from collections.abc import Iterable
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterable
+from typing import TYPE_CHECKING, Any
 
 from autolab.models import (
     AcceptanceCriteria,
@@ -1094,9 +1095,7 @@ class ClaudePlanner(Planner):
                 png = _load_png_bytes(r)
                 if png is not None:
                     images.append(png)
-        resp = self._transport.call(
-            _PLANNER_SYSTEM, user, images=images or None
-        )
+        resp = self._transport.call(_PLANNER_SYSTEM, user, images=images or None)
         if self._lab is not None:
             # Persist a planner claim as an Annotation attached to the lab-level
             # "planner" pseudo-record id scoped by campaign.
@@ -1199,9 +1198,7 @@ def _describe_plan_context(
         for res in lab.resources.list():
             lines.append(f"  - {res.name} kind={res.kind} caps={res.capabilities}")
     obj_key = ctx.objective.key
-    summary = _summarise_objective_progress(
-        ctx.history, obj_key, direction=ctx.objective.direction
-    )
+    summary = _summarise_objective_progress(ctx.history, obj_key, direction=ctx.objective.direction)
     if summary:
         lines.append(summary)
     history = list(ctx.history)[-24:]

@@ -17,10 +17,14 @@ def test_optuna_and_claude_campaigns_share_comparison_contract():
     optuna = _campaign_body("optuna", workflow)
     claude = _campaign_body("claude", workflow)
 
-    assert optuna["objective"] == claude["objective"] == {
-        "key": "Hmax_A_per_m",
-        "direction": "maximise",
-    }
+    assert (
+        optuna["objective"]
+        == claude["objective"]
+        == {
+            "key": "Hmax_A_per_m",
+            "direction": "maximise",
+        }
+    )
     assert optuna["budget"] == claude["budget"] == 12
     assert optuna["workflow"] == claude["workflow"] == workflow
     assert optuna["planner_config"]["search_space"] == SHAPE_SEARCH_SPACE

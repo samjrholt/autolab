@@ -9,7 +9,7 @@ ROOT = Path(__file__).parent.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from examples.wsl_ssh_demo.ssh import REMOTE_SCRIPTS_DIR, SSH_HOST, ssh_available  # noqa: E402
+from examples.wsl_ssh_demo.ssh import REMOTE_SCRIPTS_DIR, SSH_HOST, ssh_available
 
 pytestmark = pytest.mark.skipif(
     not ssh_available(),

@@ -202,7 +202,8 @@ async def test_escalation_stop_terminates_campaign(tmp_path):
                     )
                     return
 
-        asyncio.create_task(resolve_stop())
+        _resolve_task = asyncio.create_task(resolve_stop())
         summary = await lab.run_campaign(campaign, planner)
+        _resolve_task.cancel()
 
         assert summary.status == "stopped"

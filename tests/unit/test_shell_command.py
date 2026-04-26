@@ -43,7 +43,7 @@ async def test_shell_command_captures_nonzero_exit(tmp_path: Path) -> None:
 
     ctx = OperationContext(record_id="rec-fail12345678", operation="shell_command")
     result = await op.run(
-        {"command": f"{sys.executable} -c \"import sys; sys.exit(7)\""},
+        {"command": f'{sys.executable} -c "import sys; sys.exit(7)"'},
         context=ctx,
     )
     assert result.status == "failed"

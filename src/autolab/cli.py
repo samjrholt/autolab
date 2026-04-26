@@ -32,7 +32,9 @@ app = typer.Typer(add_completion=False, help="autolab — thin client over the L
 def serve(
     host: str = "127.0.0.1",
     port: int = 8000,
-    root: str = typer.Option(None, help="Ledger root directory (defaults to ./.autolab-runs/default)"),
+    root: str = typer.Option(
+        None, help="Ledger root directory (defaults to ./.autolab-runs/default)"
+    ),
     bootstrap: str = typer.Option(
         None,
         help="Bootstrap mode: superellipse | mammos | wsl_ssh_demo | demo_quadratic | all | none | <module:fn>",
@@ -80,7 +82,9 @@ def verify(root: Path = typer.Option(..., help="Lab root containing ledger/")) -
     with Lab(root) as lab:
         bad = lab.verify_ledger()
         if not bad:
-            typer.secho(f"OK — {sum(1 for _ in lab.ledger.iter_records())} records verified", fg="green")
+            typer.secho(
+                f"OK — {sum(1 for _ in lab.ledger.iter_records())} records verified", fg="green"
+            )
         else:
             typer.secho(f"FAIL — {len(bad)} bad record ids:", fg="red")
             for rid in bad:

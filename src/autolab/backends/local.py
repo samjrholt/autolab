@@ -59,9 +59,7 @@ class LocalBackend:
         if not src.exists():
             raise FileNotFoundError(f"output not produced: {remote_path}")
         if src.stat().st_size > size_limit_bytes:
-            raise ValueError(
-                f"output_too_large: {remote_path} exceeds {size_limit_bytes} bytes"
-            )
+            raise ValueError(f"output_too_large: {remote_path} exceeds {size_limit_bytes} bytes")
         local_path.parent.mkdir(parents=True, exist_ok=True)
         # "Local" backend: same filesystem, copy only if paths differ.
         if src.resolve() != local_path.resolve():
@@ -102,10 +100,8 @@ class LocalBackend:
             )
 
         try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_seconds
-            )
-        except asyncio.TimeoutError:
+            stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_seconds)
+        except TimeoutError:
             proc.kill()
             await proc.wait()
             return RemoteCommandResult(

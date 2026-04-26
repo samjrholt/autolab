@@ -16,6 +16,7 @@ def http_client(tmp_path, monkeypatch):
     monkeypatch.setenv("AUTOLAB_BOOTSTRAP", "none")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     from fastapi.testclient import TestClient
+
     from autolab.server.app import app
 
     with TestClient(app) as client:
