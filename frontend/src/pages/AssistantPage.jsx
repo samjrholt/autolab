@@ -210,7 +210,7 @@ export default function AssistantPage({ status, refresh }) {
     <>
       <PageHeader
         title="Setup Assistant"
-        description="Describe your lab in natural language. Claude asks for missing details, then proposes setup changes for approval."
+        description="Describe your lab in natural language. Claude drafts resources, capabilities, and workflows for human approval; the hackathon sensor workflow is available as a ready-made example pack."
       />
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 320px", gap: 16, alignItems: "flex-start" }}>

@@ -59,7 +59,7 @@ export default function CampaignsPage({ campaigns, onSelectCampaign, onNewCampai
       {!hasCampaigns ? (
         <EmptyState
           title="No campaigns yet"
-          description="Start your first campaign to watch resources fill, records stream into the ledger, and the Planner react to results in real time."
+          description="Start a campaign after registering resources, capabilities, and a workflow. For the hackathon path, apply the sensor demo pack first, then start the prepared campaigns."
           action={
             <button type="button" onClick={onNewCampaign} className="btn-primary">
               Start your first campaign

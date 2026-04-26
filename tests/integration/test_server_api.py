@@ -130,6 +130,73 @@ def test_campaign_submit_runs_and_completes(client):
     assert s["status"] in ("completed", "failed", "cancelled")
 
 
+def test_campaign_submit_rejects_unregistered_planner_operation(client):
+    response = client.post(
+        "/campaigns",
+        json={
+            "name": "unsupported-random-campaign",
+            "objective": {"key": "score", "direction": "maximise"},
+            "budget": 1,
+            "planner": "optuna",
+            "planner_config": {
+                "operation": "not_a_registered_capability",
+                "search_space": {"x": {"type": "float", "low": 0.0, "high": 1.0}},
+            },
+        },
+    )
+    assert response.status_code == 400
+    assert "not registered" in response.json()["error"]
+
+
+def test_campaign_submit_rejects_inline_workflow_with_unknown_operation(client):
+    response = client.post(
+        "/campaigns",
+        json={
+            "name": "unsupported-workflow",
+            "objective": {"key": "score", "direction": "maximise"},
+            "budget": 1,
+            "planner": "optuna",
+            "planner_config": {
+                "operation": "missing_tool",
+                "search_space": {"x": {"type": "float", "low": 0.0, "high": 1.0}},
+            },
+            "workflow": {
+                "name": "invented-workflow",
+                "steps": [{"step_id": "s1", "operation": "missing_tool"}],
+            },
+        },
+    )
+    assert response.status_code == 400
+    assert "unregistered capabilities" in response.json()["error"]
+
+
+def test_campaign_submit_accepts_registered_workflow_by_name(client):
+    workflow = client.post(
+        "/workflows",
+        json={
+            "name": "demo-quadratic-workflow",
+            "steps": [{"step_id": "score", "operation": "demo_quadratic"}],
+        },
+    )
+    assert workflow.status_code == 200
+
+    response = client.post(
+        "/campaigns",
+        json={
+            "name": "name-only-workflow",
+            "objective": {"key": "score", "direction": "maximise"},
+            "budget": 1,
+            "planner": "optuna",
+            "planner_config": {
+                "operation": "demo_quadratic",
+                "search_space": {"x": {"type": "float", "low": 0.0, "high": 1.0}},
+            },
+            "workflow": {"name": "demo-quadratic-workflow"},
+        },
+    )
+    assert response.status_code == 200
+
+
 def test_ledger_filter_dsl(client):
     # Submit a tiny campaign so the ledger has data.
     cid = client.post(
@@ -215,9 +282,7 @@ def test_campaign_designer_refinement_can_move_from_questions_to_ready(client):
         json={
             "text": "I want to start a campaign around this problem",
             "previous": initial_body["campaign"],
-            "instruction": (
-                "Use demo_quadratic, optimise score, and vary x between 0 and 1."
-            ),
+            "instruction": ("Use demo_quadratic, optimise score, and vary x between 0 and 1."),
         },
     )
     assert refined.status_code == 200
@@ -246,7 +311,9 @@ def test_campaign_designer_handles_physics_style_prompt_with_registered_tool(cli
 
     r = client.post(
         "/campaigns/design",
-        json={"text": "Use anneal_scan to maximise coercivity_kAm by varying temp_k between 900 and 1200."},
+        json={
+            "text": "Use anneal_scan to maximise coercivity_kAm by varying temp_k between 900 and 1200."
+        },
     )
     assert r.status_code == 200
     body = r.json()
@@ -274,7 +341,9 @@ def test_campaign_designer_handles_automated_lab_prompt_with_registered_tool(cli
 
     r = client.post(
         "/campaigns/design",
-        json={"text": "Run plate_reader_scan to maximise fluorescence while varying ph from 6 to 8."},
+        json={
+            "text": "Run plate_reader_scan to maximise fluorescence while varying ph from 6 to 8."
+        },
     )
     assert r.status_code == 200
     body = r.json()
@@ -449,9 +518,7 @@ def test_annotation_endpoint(client):
     assert "annotations" in detail
     assert "operation" in detail["record"]
     assert "record_status" in detail["record"]
-    assert any(
-        a.get("body", {}).get("note") == "manual test note" for a in detail["annotations"]
-    )
+    assert any(a.get("body", {}).get("note") == "manual test note" for a in detail["annotations"])
 
 
 def test_websocket_hello(client):

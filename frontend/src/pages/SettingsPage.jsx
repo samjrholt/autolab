@@ -102,11 +102,15 @@ export default function SettingsPage({ status, onOpenAssistant }) {
           <Section id="examples" active={active}>
             <h3 style={{ margin: "0 0 14px", fontSize: 15, fontWeight: 500 }}>Example packs</h3>
             <div style={{ fontSize: 13, color: "var(--color-muted)", marginBottom: 10 }}>
-              Removable bundles of Capabilities, Workflows, and sample data. Examples live under
-              {" "}<code>examples/</code> in the repo. Install them to try the lab without writing your own capabilities first.
+              Removable bundles of Resources, Capabilities, Workflows, and prepared Campaigns. Examples live under
+              {" "}<code>examples/</code> in the repo, so the Lab stays clean by default while demos can be installed deliberately.
             </div>
-            <div style={{ fontSize: 13, color: "var(--color-secondary)" }}>
-              (Discovery surface coming — for now, install via <code>autolab register tool examples/&lt;pack&gt;/capabilities/*.yaml</code>.)
+            <div style={{ fontSize: 13, color: "var(--color-secondary)", marginBottom: 8 }}>
+              Hackathon example: run <code>pixi run sensor-demo</code> against a running Lab to install
+              the magnetic-sensor workflow and queued Claude/Optuna campaigns.
+            </div>
+            <div style={{ fontSize: 12, color: "var(--color-tertiary)" }}>
+              Custom setup is available through the Setup Assistant and Library designer surfaces.
             </div>
           </Section>
 

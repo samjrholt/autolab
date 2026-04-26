@@ -387,7 +387,7 @@ export default function DesignerPage({ kind, status, refresh, onDone, initial })
     <>
       <PageHeader
         title={config.title}
-        description={config.description}
+        description={`${config.description} Flexible setup is an alpha path: review proposals and schemas before registering them.`}
         primaryAction={
           onDone ? (
             <button type="button" className="btn-ghost" onClick={onDone}>

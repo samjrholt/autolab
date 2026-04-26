@@ -1116,23 +1116,155 @@ def _make_planner(lab: Lab, kind: str, config: dict[str, Any], *, claude_policy:
         raise HTTPException(400, f"planner {kind!r} config invalid: {exc}") from exc
 
 
+def _available_tool_names(lab: Lab) -> list[str]:
+    return sorted(declaration.name for declaration in lab.tools.list())
+
+
+def _available_workflow_names(lab: Lab) -> list[str]:
+    return sorted(lab._workflows.keys())
+
+
+def _resolve_submitted_workflow(lab: Lab, raw: dict[str, Any] | None) -> WorkflowTemplate | None:
+    if not raw:
+        return None
+    workflow_name = str(raw.get("name") or "").strip()
+    if "steps" not in raw:
+        if workflow_name and workflow_name in lab._workflows:
+            return lab._workflows[workflow_name]
+        available = ", ".join(_available_workflow_names(lab)) or "none registered"
+        raise HTTPException(
+            400,
+            f"workflow {workflow_name!r} is not registered and no inline steps were provided. "
+            f"Available workflows: {available}.",
+        )
+    try:
+        return WorkflowTemplate(**raw)
+    except ValidationError as exc:
+        raise HTTPException(400, exc.errors()) from exc
+
+
+def _operation_outputs(lab: Lab, operation_names: set[str]) -> set[str]:
+    output_keys: set[str] = set()
+    for operation_name in operation_names:
+        if not lab.tools.has(operation_name):
+            continue
+        output_keys.update((lab.tools.get(operation_name).outputs or {}).keys())
+    return output_keys
+
+
+def _campaign_submission_issues(
+    lab: Lab,
+    *,
+    workflow: WorkflowTemplate | None,
+    planner_config: dict[str, Any],
+    objective_key: str | None,
+) -> list[str]:
+    issues: list[str] = []
+    available_tools = _available_tool_names(lab)
+    available_tools_text = ", ".join(available_tools) or "none registered"
+    workflow_operations: set[str] = set()
+
+    if workflow is not None:
+        workflow_operations = {step.operation for step in workflow.steps}
+        missing_operations = sorted(
+            operation for operation in workflow_operations if not lab.tools.has(operation)
+        )
+        if missing_operations:
+            issues.append(
+                "Workflow uses unregistered capabilities "
+                f"{missing_operations}. Available capabilities: {available_tools_text}."
+            )
+
+        step_ids = {step.step_id for step in workflow.steps}
+        for step in workflow.steps:
+            for input_name, reference in step.input_mappings.items():
+                source_step_id, separator, output_key = str(reference).partition(".")
+                if not separator or not source_step_id or not output_key:
+                    issues.append(
+                        f"Workflow step {step.step_id!r} maps input {input_name!r} "
+                        f"from invalid reference {reference!r}; use step_id.output_key."
+                    )
+                elif source_step_id not in step_ids:
+                    issues.append(
+                        f"Workflow step {step.step_id!r} maps input {input_name!r} "
+                        f"from unknown step {source_step_id!r}."
+                    )
+
+    planner_operation = str(planner_config.get("operation") or "").strip()
+    if planner_operation:
+        if workflow is not None and planner_operation not in workflow_operations:
+            workflow_ops_text = ", ".join(sorted(workflow_operations)) or "none"
+            issues.append(
+                f"Planner target operation {planner_operation!r} is not in workflow "
+                f"{workflow.name!r}. Workflow operations: {workflow_ops_text}."
+            )
+        elif workflow is None and not lab.tools.has(planner_operation):
+            issues.append(
+                f"Planner target operation {planner_operation!r} is not registered. "
+                f"Available capabilities: {available_tools_text}."
+            )
+
+    if objective_key:
+        if workflow is not None:
+            candidate_outputs = _operation_outputs(lab, workflow_operations)
+        elif planner_operation and lab.tools.has(planner_operation):
+            candidate_outputs = _operation_outputs(lab, {planner_operation})
+        else:
+            candidate_outputs = _operation_outputs(lab, set(available_tools))
+        if candidate_outputs and objective_key not in candidate_outputs:
+            outputs_text = ", ".join(sorted(candidate_outputs))
+            issues.append(
+                f"Objective key {objective_key!r} is not produced by the selected "
+                f"capability/workflow. Available outputs: {outputs_text}."
+            )
+
+    return issues
+
+
+def _campaign_validation_question(issues: list[str]) -> str:
+    joined = " ".join(issues).lower()
+    if "unregistered" in joined or "not registered" in joined:
+        return "Which registered capability or workflow should autolab use instead?"
+    if "objective key" in joined:
+        return "Which output metric from the registered tools should autolab optimise?"
+    return "Which operation, workflow, objective metric, and search inputs should define this campaign?"
+
+
+def _notes_with_validation(notes: str, issues: list[str]) -> str:
+    suffix = "Cannot apply yet: " + " ".join(issues)
+    if not notes:
+        return suffix
+    if suffix in notes:
+        return notes
+    return f"{notes} {suffix}"
+
+
 @app.post("/campaigns")
 async def submit_campaign(body: CampaignRequest, request: Request) -> dict[str, Any]:
     lab = _lab(request)
     scheduler = _scheduler(request)
     try:
-        workflow = None
-        if body.workflow:
-            workflow = WorkflowTemplate(**body.workflow)
+        workflow = _resolve_submitted_workflow(lab, body.workflow)
+        objective = Objective(**body.objective)
+        issues = _campaign_submission_issues(
+            lab,
+            workflow=workflow,
+            planner_config=body.planner_config,
+            objective_key=objective.key,
+        )
+        if issues:
+            raise HTTPException(400, " ".join(issues))
         campaign = Campaign(
             name=body.name,
             description=body.description,
-            objective=Objective(**body.objective),
+            objective=objective,
             acceptance=(AcceptanceCriteria(**body.acceptance) if body.acceptance else None),
             budget=body.budget,
             parallelism=body.parallelism,
             workflow=workflow,
         )
+    except HTTPException:
+        raise
     except ValidationError as exc:
         raise HTTPException(400, exc.errors()) from exc
 
@@ -1423,12 +1555,34 @@ async def design_campaign(body: DesignRequest, request: Request) -> dict[str, An
         previous=body.previous,
         instruction=body.instruction,
     )
+    questions = list(result.questions)
+    ready_to_apply = result.ready_to_apply
+    notes = result.notes
+    if result.campaign_json:
+        validation_issues: list[str] = []
+        try:
+            workflow = _resolve_submitted_workflow(lab, result.workflow_json)
+            objective_key = (result.campaign_json.get("objective") or {}).get("key")
+            validation_issues = _campaign_submission_issues(
+                lab,
+                workflow=workflow,
+                planner_config=dict(result.campaign_json.get("planner_config") or {}),
+                objective_key=str(objective_key) if objective_key else None,
+            )
+        except HTTPException as exc:
+            validation_issues = [str(exc.detail)]
+        if validation_issues:
+            ready_to_apply = False
+            notes = _notes_with_validation(notes, validation_issues)
+            question = _campaign_validation_question(validation_issues)
+            if question not in questions:
+                questions.append(question)
     return {
         "campaign": result.campaign_json,
         "workflow": result.workflow_json,
-        "questions": result.questions,
-        "ready_to_apply": result.ready_to_apply,
-        "notes": result.notes,
+        "questions": questions,
+        "ready_to_apply": ready_to_apply,
+        "notes": notes,
         "model": result.raw.model,
         "offline": result.raw.offline,
         "prompt_sha256": result.raw.prompt_hash,
