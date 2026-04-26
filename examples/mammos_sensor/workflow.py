@@ -179,6 +179,7 @@ SENSOR_SHAPE_OPT_WORKFLOW = WorkflowTemplate(
             input_mappings={
                 "Ms_A_per_m": "material.Ms_A_per_m",
                 "A_J_per_m": "material.A_J_per_m",
+                "K1_J_per_m3": "material.K1_J_per_m3",
             },
         ),
     ],

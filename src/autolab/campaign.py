@@ -325,6 +325,7 @@ class CampaignRunner:
                 *((ActionType.ACCEPT,) if self.campaign.acceptance is not None else ()),
             ),
             remaining_budget=self._remaining_budget(),
+            metadata={"objective": self.campaign.objective},
         )
         action = self.planner.react(decision_ctx)
         await self._apply_action(step, record, action)

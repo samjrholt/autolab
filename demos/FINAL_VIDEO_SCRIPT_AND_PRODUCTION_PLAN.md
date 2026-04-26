@@ -1,6 +1,6 @@
 # autolab trailer — submission cut
 
-3:00 target · product visible by 0:35 · one campaign · one adaptation · one ledger proof
+3:00 target · autolab visible by 0:35 · one search problem · one adaptation · one scheduler proof · one ledger proof · one clean payoff
 
 This cut combines the cinematic thesis with the working-MVP proof. The viewer should leave with one sentence:
 
@@ -12,7 +12,7 @@ Submission-day rule: **do not add new product features for the video.** Tighten 
 
 ## ACT 1 — THE PROBLEM
 
-### Pod 1 (0:00 – 0:18) — The Imagination Gap
+### Pod 1 (0:00 – 0:16) — The Imagination Gap
 
 **Visual:** Warm paper. Lora serif words fade in one at a time: *Bronze. Iron. Steel. Silicon.* Question mark. No UI yet.
 
@@ -25,40 +25,24 @@ AI can now imagine millions of candidates.
 But imagination is not the bottleneck anymore.
 Proof is.
 
-The bottleneck is the lab.
-
-**On-screen caption:** "The bottleneck is the lab."
+**On-screen caption:** "Imagination is not the bottleneck."
 
 ---
 
-### Pod 2 (0:18 – 0:32) — How Science Actually Runs
+### Pod 2 (0:16 – 0:35) — Proof Needs Provenance
 
-**Visual:** Hand-drawn ink sketches in amber: scientist moving a USB stick between machines, stack of paper notebooks, scattered CSV icons, a fixed-arrow flowchart. Slightly chaotic, slightly absurd.
+**Visual:** Fast hand-drawn sequence: scattered CSVs, a notebook, a failed run, then a single value card — "coercivity = 2T" — surrounded by missing context: geometry, sweep rate, material, instrument state.
 
 **Voiceover:**
 Real science is messy.
 
 Data is scattered.
-Failures disappear.
+Failures are rarely published.
 Context lives in notebooks, folders, and memory.
 
-In AI for science, the problem is often not garbage in, garbage out.
-It is nothing in, nothing out.
+A measurement without its history is just a number.
 
-**On-screen caption:** "Nothing in. Nothing out."
-
----
-
-### Pod 3 (0:32 – 0:45) — Property Without Provenance
-
-**Visual:** Two side-by-side panels. Left: a database card with one lonely value — "coercivity = 2T". Right: missing context fans out in ink annotations — annealing temperature, cooling rate, grain size, sweep rate, sample geometry, instrument state.
-
-**Voiceover:**
-The deeper problem is provenance.
-
-The same composition can give completely different results depending on processing, geometry, and instrument state.
-
-Without that context, even good data is noise.
+Property without provenance is noise.
 
 **On-screen caption:** "Property without provenance is noise."
 
@@ -66,18 +50,18 @@ Without that context, even good data is noise.
 
 ## ACT 2 — THE IMPLEMENTATION
 
-### Pod 4 (0:45 – 1:05) — Meet autolab
+### Pod 3 (0:35 – 0:55) — Meet autolab
 
-**Visual:** Clean transition into the autolab Console. Three regions highlight in sequence with amber callouts: planning panel (Brain), resource-lane Gantt (Hands), scrolling record list (Ledger).
+**Visual:** Clean transition into the autolab Console. Three regions highlight in sequence with amber callouts: planning / evidence rail (Brain), resource-lane Gantt (Hands), scrolling record list (Ledger).
 
 **Voiceover:**
 So I built autolab.
 
 An autonomous lab with three simple parts.
 
-A Brain: Claude decides what to try next.
-Hands: registered tools run simulations and experiments.
-A Ledger: every action, claim, result, and failure is written down.
+Brain: Claude reads the lab record, chooses from the available tools, designs experiments, and reacts as evidence comes in.
+Hands: autolab routes each step to the right tool and resource, so the work actually runs.
+Ledger: every action, result, claim, and failure becomes a record.
 
 The record is the foundation.
 
@@ -85,37 +69,43 @@ The record is the foundation.
 
 ---
 
-### Pod 5 (1:05 – 1:30) — The Race Starts
+### Pod 4 (0:55 – 1:25) — One Search Problem Inside The Lab
 
-**Visual:** Screen recording. Two prepared campaigns — Claude and Optuna — start on the same search space. Resource lanes fill in parallel; plan cards move from queued to running to complete; ledger rows tick in.
+**Visual:** Screen recording. Two prepared runs — Optuna and Claude — start on the same search space. Resource lanes fill in parallel; plan cards move from queued to running to complete; ledger rows tick in. Keep the Console visible, not just the comparison chart.
 
 **Voiceover:**
-Here is one campaign running inside the lab.
+Here is one materials-design problem inside autolab, run two ways.
 
-Same goal: design a better magnetic sensor.
-Same budget: twelve real physics simulations each.
+Both runs have the same goal: design a better magnetic sensor.
+Both get the same budget: twelve real physics simulations.
 
-One planner is Claude.
-One is standard Bayesian optimisation.
+One uses standard Bayesian optimisation.
+The other is planned by Claude.
 
-autolab schedules the work across the VM resource and records every action as it happens.
+autolab schedules the work across the VM resource, updates the plan, and records every action as it happens.
 
 **On-screen caption:** "One goal in. A whole lab moving."
 
 ---
 
-### Pod 6 (1:30 – 2:05) — Claude Reacts Like a Scientist
+### Pod 5 (1:25 – 2:10) — From Baseline To Reaction
 
 **Visual:** Zoom into the Console reasoning rail and plan tree.
+- Optuna baseline: scattered candidates, objective improves slowly, plan cards complete without physics rationale.
 - Trial 1: Fe16N2 · sx=60 nm · sy=10 nm → 400 mT. Highlight: "highest-Ms material", "strong aspect ratio", "shape anisotropy".
 - Ledger row / claim appears with Claude rationale.
 - Planner reacts: Trial 2 is added/refined.
 - Trial 2: Fe16N2 · sx=68 nm · sy=6 nm → 500 mT. Highlight: "exploit", "extreme elongation", "push Hmax higher".
 
 **Voiceover:**
-This is where autolab is different.
+Bayesian optimisation sees a number.
+It samples, updates, and slowly improves.
 
-Claude starts from physics: the highest-magnetisation material, stretched into a high-aspect-ratio shape.
+Then Claude gets the same lab, the same budget, and the same tool catalogue.
+
+This is where autolab becomes different.
+
+Claude starts from physics: it intuits the highest-magnetisation material, stretched into a high-aspect-ratio shape.
 
 Trial one reaches 400 millitesla.
 
@@ -126,63 +116,67 @@ Claude pushes the same idea further: thinner, longer, more shape anisotropy.
 
 Trial two hits 500.
 
+The important part is not that Claude made a suggestion.
+It is that every result becomes a record, and the plan changes because of that record.
+
 **On-screen caption:** "Evidence in. Plan updated."
 
 ---
 
 ## ACT 3 — THE CONSEQUENCES
 
-### Pod 7 (2:05 – 2:28) — Claude Beats Blind Optimisation
+### Pod 6 (2:10 – 2:35) — Claude Beats Blind Optimisation
 
-**Visual:** Full-screen chart (`var/demo_lab/_compare_optuna_vs_claude.png`). Best-so-far panel. Claude flat at 500 mT from trial 2; Optuna reaches 500 mT only at trial 12. Scatter panel: Claude squares all red Fe16N2; Optuna circles scattered.
+**Visual:** Full-screen chart (`var/demo_lab/_compare_optuna_vs_claude.png`). Reveal Optuna first: best-so-far climbs until trial 12; scattered circles across the search space. Then reveal Claude: flat at 500 mT from trial 2; red Fe16N2 squares clustered around the physics-informed region.
 
 **Voiceover:**
 This is the result.
 
-Claude found the optimum in two trials.
+Standard Bayesian optimisation found it on trial twelve.
 
-Optuna — a standard Bayesian optimisation method — found it on trial twelve.
+Claude found it on trial two.
 
 Six times faster.
 
 Not because it got lucky.
-Because it had words for the physics:
-magnetisation, switching field, shape anisotropy.
+Because it could reason with the physics and refine with new evidence.
 
 **On-screen caption:** "Claude found it 6× faster."
 
 ---
 
-### Pod 8 (2:28 – 2:45) — Every Step is Evidence
+### Pod 7 (2:35 – 2:50) — Every Step is Evidence
 
 **Visual:** Camera glides into the ledger. 49 records. SHA-256 checksums. Claim records. Prompt hash / response text snippets. Parent-child links. Feels like receipts, not decoration.
 
 **Voiceover:**
-Every part of that race is recorded.
+And this is why the result is trustworthy.
 
-Forty-nine records.
-Each hashed.
-Each append-only.
+Every step leaves a receipt.
 
-The Claude claim is a record.
-The simulation result is a record.
-The next decision links back to both.
+The simulation.
+The Claude claim.
+The planner decision that followed.
+
+Each one is hashed.
+Each one is append-only.
+And each one points back to the evidence it used.
 
 **On-screen caption:** "The record is the foundation."
 
 ---
 
-### Pod 9 (2:45 – 3:00) — The Dataset Is the Moat
+### Pod 8 (2:50 – 3:00) — The Dataset Is the Moat
 
 **Visual:** Pull back from one run to many. Successful trials, failed trials, Claude claims, Optuna trials, ledger records become a growing map. Then return to warm paper: *Bronze. Iron. Steel. Silicon.* A new word fades in: *autolab.*
 
 **Voiceover:**
 This is the real prize.
 
-Not one lucky result.
-A dataset of what worked, what failed, and why.
+A growing memory of what worked, what failed, and why.
 
-Every campaign makes the next one smarter.
+Every campaign adds evidence.
+Every record makes the next decision smarter.
 
 autolab is the autonomous lab for the next materials era.
 
@@ -208,8 +202,8 @@ Apache-2.0 · github.com/samjrholt/autolab
 - Technical terms (hashes, trial numbers, field values) appear in the UI visually, not spoken aloud
 - Do not end on replay — close on the compounding dataset
 - Speak slowly. Let silence do some of the work.
-- Product should appear by 0:35-0:45. Do not spend a full minute on the problem before showing the thing that was built.
-- The race is one campaign inside autolab, not the whole product. Keep the larger claim: closed-loop autonomous science with provenance as the foundation.
+- Product should appear by 0:35. Do not spend a full minute on the problem before showing the thing that was built.
+- The race is one search problem inside autolab, not the whole product. Keep the larger claim: closed-loop autonomous science with provenance as the foundation.
 - Make `react()` explicit in plain English: result written to ledger -> planner reacts -> plan changes.
 - If live Claude latency is risky, record from a seeded/prior ledger. Deterministic capture is acceptable because replayable evidence is part of the product story.
 
@@ -244,9 +238,9 @@ Commit policy:
 
 ---
 
-## Actual recorded transcripts
+## Previous Recorded Transcripts
 
-> Generated by `transcribe.mjs` from the recorded M4A files.
+> Generated by `transcribe.mjs` from the recorded M4A files. These are reference transcripts from the previous cut; use the timed script above for the submission retake/edit.
 
 ### Pod 1 — The Imagination Gap
 

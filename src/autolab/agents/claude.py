@@ -41,7 +41,7 @@ import re
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Iterable
 
 from autolab.models import (
     AcceptanceCriteria,
@@ -694,6 +694,80 @@ def _serialise_record(record: Any) -> str:
     return "\n".join(parts)
 
 
+def _summarise_objective_progress(
+    history: Iterable[Any],
+    objective_key: str | None,
+    direction: str | None = None,
+    *,
+    window: int = 6,
+) -> str:
+    """Framework-agnostic trend block for plan() / react() prompts.
+
+    Computes best-so-far (with the trial's inputs), the last-`window` slope of
+    the objective key, a plateau flag, and a duplicate-input flag — purely from
+    `record.outputs[objective_key]` and `record.inputs`. No domain knowledge.
+    """
+    if not objective_key:
+        return ""
+
+    scored: list[tuple[int, float, dict[str, Any], str]] = []
+    for i, r in enumerate(history, 1):
+        outs = getattr(r, "outputs", None) or {}
+        v = outs.get(objective_key)
+        if isinstance(v, (int, float)):
+            scored.append(
+                (i, float(v), getattr(r, "inputs", None) or {}, getattr(r, "id", "?") or "?")
+            )
+    if not scored:
+        return ""
+
+    is_max = (direction or "maximise").lower() not in {"minimise", "minimize", "min"}
+    best = max(scored, key=lambda x: x[1]) if is_max else min(scored, key=lambda x: x[1])
+    best_idx, best_val, best_inputs, best_id = best
+    inputs_preview = json.dumps(best_inputs, default=str)[:240]
+
+    tail = scored[-window:]
+    last_vals = [round(v, 3) for _, v, *_ in tail]
+    slope = "FLAT"
+    if len(tail) >= 2:
+        delta = tail[-1][1] - tail[0][1]
+        span = max(abs(tail[0][1]), 1e-12)
+        if abs(delta) / span < 0.02:
+            slope = "FLAT"
+        elif (delta > 0) == is_max:
+            slope = "IMPROVING"
+        else:
+            slope = "REGRESSING"
+
+    plateau = False
+    if len(tail) >= 3:
+        diffs = [abs(tail[k][1] - tail[k - 1][1]) for k in range(1, len(tail))]
+        scale = max(abs(best_val), 1e-12)
+        plateau = all(d / scale < 0.01 for d in diffs)
+
+    dup_keys: list[str] = []
+    seen: dict[str, int] = {}
+    for i, _, inputs, _ in tail:
+        key = json.dumps(inputs, sort_keys=True, default=str)
+        if key in seen:
+            dup_keys.append(f"trial #{seen[key]} == trial #{i}")
+        else:
+            seen[key] = i
+
+    lines = [
+        "Objective progress (computed framework-side, no domain knowledge):",
+        f"  best_so_far: {objective_key}={best_val:.6g} at trial #{best_idx} "
+        f"(record_id={best_id}) inputs={inputs_preview}",
+        f"  last_{len(tail)}_values: {last_vals}",
+        f"  slope: {slope}",
+    ]
+    if plateau:
+        lines.append("  plateau: TRUE — last few trials are within 1% of each other")
+    if dup_keys:
+        lines.append(f"  duplicate_inputs_in_window: {dup_keys[:4]}")
+    return "\n".join(lines)
+
+
 def _has_png_output(record: Any) -> bool:
     outputs = getattr(record, "outputs", None) or {}
     return any(str(k).endswith("_png") or str(k).endswith("_image") for k in outputs)
@@ -785,6 +859,25 @@ Rules:
 - Prefer `retry_step` for equipment_failure or measurement_rejection if retries remain.
 - Prefer `escalate` for process_deviation.
 - Prefer `continue` for off_target synthesis deviations (discoveries to explore).
+
+Scientific scrutiny (apply to every decision):
+- Inspect attached figures FIRST. Before reading any numerical output, state in
+  one sentence what the figure actually shows. If a figure shows no signal —
+  a flat line, a blank plot, or noise indistinguishable from the baseline — the
+  headline number is a measurement artifact, regardless of its value. Do not
+  treat such results as discoveries.
+- Cross-check supporting outputs against the headline. If two output fields
+  contradict each other (e.g. a non-zero range/width alongside a zero
+  derivative/gradient, a peak landing exactly on a swept boundary, an integral
+  larger than its envelope), flag it and treat the result as suspect.
+- Identical numerical values to floating-point precision across trials with
+  different inputs are physically impossible. If multiple trials return the
+  exact same number, the measurement is saturating against an instrument
+  limit or you have a degenerate sample — vary the inputs that control the
+  measurement *range*, not just the parameters you were already sweeping.
+- Be skeptical of "best-so-far" results that land on the corner of the
+  search space, especially if they are dramatically better than nearby points.
+  Verify by perturbing the inputs slightly and confirming the result moves.
 """
 
 _LEDGER_CITATION_PREAMBLE = """\
@@ -880,14 +973,23 @@ def _describe_decision_context(ctx: DecisionContext) -> str:
         f"inputs: {json.dumps(rec.inputs, default=str)[:400]}",
         f"outputs: {json.dumps(rec.outputs, default=str)[:400]}",
     ]
+    objective = (ctx.metadata or {}).get("objective") if hasattr(ctx, "metadata") else None
+    obj_key = getattr(objective, "key", None)
+    obj_dir = getattr(objective, "direction", None)
+    summary = _summarise_objective_progress(ctx.history, obj_key, direction=obj_dir)
+    if summary:
+        lines.append(summary)
+
     # Short history tail — include inputs+outputs so react() can iterate on data,
     # not just on operation names. Without this, Claude re-proposes the same
     # parameters because it never sees the prior result.
     tail = list(ctx.history)[-24:]
     lines.append(f"recent_history (last {len(tail)} records, oldest first):")
     for r in tail:
+        score = (r.outputs or {}).get(obj_key) if obj_key else None
+        score_s = f" {obj_key}={score}" if score is not None else ""
         lines.append(
-            f"  - {r.operation} status={r.record_status} fmode={r.failure_mode} "
+            f"  - {r.operation} status={r.record_status} fmode={r.failure_mode}{score_s} "
             f"inputs={json.dumps(r.inputs, default=str)[:300]} "
             f"outputs={json.dumps(r.outputs, default=str)[:300]}"
         )
@@ -918,6 +1020,25 @@ Rules:
   tool's input schema directly.
 - Prefer small batches (1-4 proposals) unless resources clearly support more.
 - Never emit prose outside the JSON.
+
+Scientific scrutiny (apply when reading prior records to plan the next batch):
+- Inspect attached figures FIRST. Before trusting a numerical "best-so-far",
+  confirm the figure shows a real signal. A flat line, blank plot, or
+  noise-only image means the headline number is a measurement artifact even
+  if it is the largest in the ledger.
+- Cross-check supporting output fields against the headline. Mutually
+  contradictory outputs (e.g. a non-zero range/width alongside a zero
+  derivative/gradient, a peak at exactly a swept boundary, an integral
+  larger than its envelope) mean the trial is suspect; do not propose more
+  trials in that region until you have evidence the result is real.
+- Identical numerical values to floating-point precision across trials with
+  different inputs are physically impossible. If several trials return the
+  exact same number, vary the inputs that control the measurement *range*
+  (sweep limits, mesh density, integration time, etc.), not just the
+  parameters you were already optimising.
+- Be skeptical of "best-so-far" results that land on the corner of the
+  search space, especially if they are dramatically better than nearby
+  points. Probe with small perturbations to confirm the result is robust.
 """
 
 
@@ -963,7 +1084,19 @@ class ClaudePlanner(Planner):
             batch_size=self._batch_size,
             input_routing=self._input_routing,
         )
-        resp = self._transport.call(_PLANNER_SYSTEM, user)
+        # Attach the most recent figure-bearing records as images so the
+        # planner can read its own rendered plots. Capped to keep tokens sane.
+        images: list[bytes] = []
+        for r in reversed(list(context.history)):
+            if len(images) >= _MAX_CONTEXT_IMAGES:
+                break
+            if _has_png_output(r):
+                png = _load_png_bytes(r)
+                if png is not None:
+                    images.append(png)
+        resp = self._transport.call(
+            _PLANNER_SYSTEM, user, images=images or None
+        )
         if self._lab is not None:
             # Persist a planner claim as an Annotation attached to the lab-level
             # "planner" pseudo-record id scoped by campaign.
@@ -1066,6 +1199,11 @@ def _describe_plan_context(
         for res in lab.resources.list():
             lines.append(f"  - {res.name} kind={res.kind} caps={res.capabilities}")
     obj_key = ctx.objective.key
+    summary = _summarise_objective_progress(
+        ctx.history, obj_key, direction=ctx.objective.direction
+    )
+    if summary:
+        lines.append(summary)
     history = list(ctx.history)[-24:]
     lines.append(f"Recent history (last {len(history)} records, oldest first):")
     for r in history:

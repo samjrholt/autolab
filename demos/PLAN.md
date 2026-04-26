@@ -16,17 +16,15 @@
 
 ## The Story (read before coding anything)
 
-The three-beat narrative, ordered for maximum impact:
+Use `demos/FINAL_VIDEO_SCRIPT_AND_PRODUCTION_PLAN.md` as the source of truth. The final submission video is a tight proof of the working MVP, not a broad manifesto.
 
-**Hook (0:00–0:20):** "Science is bottlenecked not by prediction models — but by decision-grade data. autolab is an autonomous lab that generates it."
+**Hook (0:00–0:35):** AI can imagine millions of materials, but proof is still slow, scattered, and poorly recorded. End the hook on the thesis: *property without provenance is noise.*
 
-**Beat 1 — Scheduler / Provenance (0:20–1:00):** Lab boots. A campaign goal is typed in plain English. The Principal Agent decomposes it into a plan tree; the resource Gantt fills with interleaved Operations. Every record hashed, every tool call logged. The ledger panel shows SHA-256 hashes landing in real time. Voiceover: *"Every action, every failure, every reasoning step — immutable, hashed, replayable."*
+**Beat 1 — Meet autolab + scheduler proof (0:35–1:25):** Show the actual Console. Brain, Hands, Ledger. Start the sensor optimisation comparison and keep the resource lanes, plan tree, and ledger rows visible while the lab schedules work across the VM resource.
 
-**Beat 2 — react() with vision (1:00–1:50):** A hysteresis loop completes — it's kinked. The PNG goes to `hysteresis_interpret`. Claude returns: *"Soft-phase contamination, confidence 72%. Recommended: raise anneal temperature 150 °C."* The plan tree reshuffles live — a new step inserts. Critically: the diagnosis is logged as a *Claim Record*, not ground truth. The next run validates it. Voiceover: *"Claude sees the loop — not just the number — and proposes the physics. Then checks itself."*
+**Beat 2 — `react()` from evidence (1:25–2:10):** Claude makes a physics-grounded first trial, the result is written to the ledger, and the planner reacts to that record by refining the next trial. The core line is: every result becomes a record, and the plan changes because of that record.
 
-**Beat 3 — Claude beats BO (1:50–2:40):** Split screen. Claude campaign converges in ~15 trials. Optuna/BO wanders. Show the convergence chart from the screenshot. Voiceover: *"Bayesian optimisation sees a scalar. Claude sees the image, infers the physics, adapts the recipe. This is what it means for an agent to be an experimentalist."* Target hit. Report PDF renders. Ledger shows the full chain: composition → processing → Hc.
-
-**Close (2:40–3:00):** Replay command. One hash. Full audit trail. Apache 2.0, public from commit 1. *"autolab. The autonomous lab with provenance as its foundation."*
+**Beat 3 — payoff + ledger proof (2:10–3:00):** Show the simple scoreboard: Claude reaches the optimum in two trials; Optuna reaches it at trial twelve. Then prove this was not a loose benchmark by zooming into the ledger: hashed records, claim records, prompt/response metadata, and parent-child links. Close on the compounding dataset, not on a replay command.
 
 ---
 

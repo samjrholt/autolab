@@ -68,6 +68,7 @@ class SensorMaterialAtT(Operation):
         temperature_K: float
         Ms_A_per_m: float
         A_J_per_m: float
+        K1_J_per_m3: float = 0.0
 
     async def run(self, inputs: dict[str, Any], ctx: OperationContext) -> OperationResult:
         parsed = self.Inputs(**inputs)
@@ -94,6 +95,7 @@ class SensorMaterialAtT(Operation):
                 "temperature_K": parsed.temperature_K,
                 "Ms_A_per_m": float(result["Ms_A_per_m"]),
                 "A_J_per_m": float(result["A_J_per_m"]),
+                "K1_J_per_m3": float(result.get("K1_J_per_m3", 0.0)),
             },
         )
 
@@ -122,6 +124,7 @@ class SensorShapeFOM(Operation):
 
         Ms_A_per_m: float
         A_J_per_m: float
+        K1_J_per_m3: float = 0.0
         sx_nm: float = Field(..., gt=0, description="ellipse semi-axis along x (nm)")
         sy_nm: float = Field(..., gt=0, description="ellipse semi-axis along y (nm)")
         thickness_nm: float = Field(default=5.0, gt=0)
@@ -134,19 +137,24 @@ class SensorShapeFOM(Operation):
         model_config = ConfigDict(extra="forbid")
 
         backend: str
-        # Primary FOM: width of linear-response region.
+        # Primary FOM: width of linear-response region from a half-sweep
+        # along the hard axis (M_y vs H_y starting at H=0).
         Hmax_A_per_m: float
         mu0_Hmax_T: float
         gradient: float
+        # Mr is reported as 0.0 — undefined from a half-sweep; kept for
+        # schema stability so downstream consumers do not break.
         Mr_A_per_m: float
-        # Hysteresis arrays for provenance + plotting.
+        # Hysteresis arrays for provenance + plotting (half-sweep).
         H_A_per_m: list[float]
         M_A_per_m: list[float]
         # Echo inputs.
         Ms_A_per_m: float
+        K1_J_per_m3: float = 0.0
         sx_nm: float
         sy_nm: float
         thickness_nm: float
+        nz_cells: int = 1
         hysteresis_loop_png: str | None = None  # absolute path to rendered PNG
 
     async def run(self, inputs: dict[str, Any], ctx: OperationContext) -> OperationResult:
@@ -195,9 +203,11 @@ class SensorShapeFOM(Operation):
             "H_A_per_m": h_out,
             "M_A_per_m": m_out,
             "Ms_A_per_m": parsed.Ms_A_per_m,
+            "K1_J_per_m3": parsed.K1_J_per_m3,
             "sx_nm": parsed.sx_nm,
             "sy_nm": parsed.sy_nm,
             "thickness_nm": parsed.thickness_nm,
+            "nz_cells": int(result.get("nz_cells", 1)),
             "hysteresis_loop_png": png_path,
         }
         return OperationResult(
@@ -231,10 +241,25 @@ try:
     A = kuz.A(T)
     Ms = kuz.Ms(T)
 
+    # Magnetocrystalline anisotropy K1(T) — present on the Kuzmin fit when the
+    # source material's K1(T) data was loaded; absent for soft-magnet datasets
+    # that only ship Ms(T). Default to 0 in that case so shape anisotropy is
+    # the only anisotropy and the soft-magnet limit is recovered.
+    K1_J_per_m3 = 0.0
+    for attr in ("K1", "K"):
+        fn = getattr(kuz, attr, None)
+        if callable(fn):
+            try:
+                K1_J_per_m3 = float(fn(T).q.to("J/m^3").value)
+                break
+            except Exception:
+                continue
+
     print(json.dumps({
         "backend_used": "mammos_spindynamics",
         "Ms_A_per_m": float(Ms.q.to("A/m").value),
         "A_J_per_m": float(A.q.to("J/m").value),
+        "K1_J_per_m3": K1_J_per_m3,
     }))
 except Exception as exc:  # noqa: BLE001
     sys.stderr.write(f"sensor material-at-T backend unavailable: {exc!r}\n")
@@ -246,6 +271,7 @@ _SHAPE_FOM_SCRIPT = r"""
 import json, sys
 try:
     import math
+    import numpy as np
     import discretisedfield as df
     import micromagneticmodel as mm
     import oommfc as mc
@@ -256,6 +282,7 @@ try:
 
     Ms_Apm = float(payload["Ms_A_per_m"])
     A_val  = float(payload["A_J_per_m"])
+    K1_val = float(payload.get("K1_J_per_m3", 0.0) or 0.0)
     sx_m = payload["sx_nm"] * 1e-9
     sy_m = payload["sy_nm"] * 1e-9
     t_m = payload["thickness_nm"] * 1e-9
@@ -264,54 +291,104 @@ try:
     H_max_mT = float(payload["H_max_mT"])
     n_steps = int(payload["n_steps"])
 
+    mu0 = 4 * math.pi * 1e-7
+
+    # Adaptive z-discretisation: keep the cell size in z below the magnetostatic
+    # exchange length, otherwise micromagnetics cannot resolve through-thickness
+    # variation (curling, partial vortices) and thick films are silently wrong.
+    lex_m = math.sqrt(2.0 * A_val / (mu0 * Ms_Apm * Ms_Apm)) if Ms_Apm > 0 else 5e-9
+    nz = max(1, int(round(t_m / lex_m)))
+
+    # Force the in-plane cell counts to be odd so a cell is centered on the
+    # origin (0, 0). Any non-degenerate ellipse contains its centre, so the
+    # central cell always lies inside the geometry and the simulation is
+    # never empty regardless of how small (sx, sy) are relative to the cell.
+    if nmesh % 2 == 0:
+        nmesh += 1
+
     region = df.Region(p1=(-L_m/2, -L_m/2, -t_m/2),
                        p2=( L_m/2,  L_m/2,  t_m/2))
-    mesh = df.Mesh(region=region, n=(nmesh, nmesh, 1))
+    mesh = df.Mesh(region=region, n=(nmesh, nmesh, nz))
 
     def norm_fn(p):
         x, y, _ = p
         inside = (x/sx_m)**2 + (y/sy_m)**2 <= 1.0
         return Ms_Apm if inside else 0.0
 
-    system = mm.System(name="sensor_shape_fom")
-    system.energy = (
+    # Magnetocrystalline anisotropy: align uniaxial K with the geometric long
+    # axis (assumed to be x; the search space convention is sx >= sy). When
+    # K1 is zero the term contributes nothing, recovering the soft-magnet limit.
+    energy = (
         mm.Exchange(A=A_val)
         + mm.Demag()
         + mm.Zeeman(H=(0, 0, 0))
     )
+    if abs(K1_val) > 0:
+        energy = energy + mm.UniaxialAnisotropy(K=K1_val, u=(1, 0, 0))
+
+    system = mm.System(name="sensor_shape_fom")
+    system.energy = energy
     system.m = df.Field(mesh, nvdim=3, value=(1, 0, 0), norm=norm_fn, valid="norm")
 
-    Hmin = (0, 0, 0)
-    Hmax_vec = ((0.1, H_max_mT, 0) * u.mT).to(u.A / u.m)
+    # Half-sweep along the hard axis (y): start at H=0 with m=(1,0,0)
+    # (saturated along the long/easy axis x; the search-space convention
+    # is sx >= sy), then ramp H_y up to +H_max in n_steps points. M_y(H_y)
+    # is the linear sensor response curve; the FOM is the width of the
+    # segment that is linear in H_y. A small offset (0.1 mT) along x
+    # breaks the symmetry and helps OOMMF converge near H=0.
+    Hmin = (0.0, 0.0, 0.0)
+    H_pos = ((0.1, +H_max_mT, 0) * u.mT).to(u.A / u.m)
     hd = mc.HysteresisDriver()
-    hd.drive(system, Hsteps=[[Hmin, tuple(Hmax_vec.value), n_steps]], verbose=0)
-
-    H_y = me.H(
-        system.table.data["By_hysteresis"].values *
-        u.Unit(system.table.units["By_hysteresis"]).to(u.A / u.m)
-    )
-    M_y = me.Entity(
-        "Magnetization",
-        system.table.data["my"].values * (Ms_Apm * u.A / u.m),
+    hd.drive(
+        system,
+        Hsteps=[[Hmin, tuple(H_pos.value), n_steps]],
+        verbose=0,
     )
 
+    # Reject degenerate samples — geometry under-resolved so OOMMF ran with
+    # M=0 everywhere, and any FOM extracted from that is a measurement
+    # artifact rather than physics. (my is normalised to [-1, 1].)
+    my_arr = np.asarray(system.table.data["my"].values, dtype=float)
+    M_span_frac = float(my_arr.max() - my_arr.min())
+    if M_span_frac < 0.05:
+        raise RuntimeError(
+            f"degenerate sample: |my_max - my_min|={M_span_frac:.3e} "
+            f"is below 5% of Ms - geometry likely under-resolved by the mesh "
+            f"(sx={payload['sx_nm']}, sy={payload['sy_nm']}, "
+            f"t={payload['thickness_nm']}, cell~{payload['region_L_nm']/payload['mesh_n']:.1f} nm)"
+        )
+
+    H_y_arr = np.asarray(system.table.data["By_hysteresis"].values, dtype=float)
+    H_unit_factor = float(u.Unit(system.table.units["By_hysteresis"]).to(u.A / u.m))
+    H_y_arr = H_y_arr * H_unit_factor
+    M_y_arr = my_arr * Ms_Apm
+
+    # Linear-region FOM — fit the half-sweep (M_y rises from ~0 at H=0 to
+    # +Ms beyond the hard-axis saturation field). find_linear_segment
+    # returns the width of the segment that is linear within `margin`.
+    H_y_ent = me.H(H_y_arr * (u.A / u.m))
+    M_y_ent = me.Entity("Magnetization", M_y_arr * (u.A / u.m))
     res = mammos_analysis.hysteresis.find_linear_segment(
-        H_y, M_y, margin=0.05 * (Ms_Apm * u.A / u.m), min_points=2,
+        H_y_ent, M_y_ent,
+        margin=0.05 * (Ms_Apm * u.A / u.m), min_points=2,
     )
-
-    mu0 = 4 * math.pi * 1e-7
     Hmax_Apm = float(res.Hmax.value)
-    Mr_val = getattr(res.Mr, "value", res.Mr)
-    Mr_Apm = float(Mr_val)
+    gradient_val = float(res.gradient)
+
+    # Mr is undefined for a half-sweep starting at H=0 with m=(1,0,0)
+    # (no descent from saturation on the opposite side). Reported as 0.0
+    # for schema stability; do not interpret as physical remanence.
+    Mr_Apm = 0.0
 
     print(json.dumps({
         "backend_used": "ubermag",
         "Hmax_A_per_m": Hmax_Apm,
         "mu0_Hmax_T": Hmax_Apm * mu0,
-        "gradient": float(res.gradient),
+        "gradient": gradient_val,
         "Mr_A_per_m": Mr_Apm,
-        "H_A_per_m": list(map(float, H_y.value)),
-        "M_A_per_m": list(map(float, M_y.value)),
+        "H_A_per_m": list(map(float, H_y_arr)),
+        "M_A_per_m": list(map(float, M_y_arr)),
+        "nz_cells": int(nz),
     }))
 except Exception as exc:  # noqa: BLE001
     import traceback as _tb
